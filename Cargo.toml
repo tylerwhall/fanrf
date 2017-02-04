@@ -1,0 +1,9 @@
+[package]
+name = "fanrf"
+version = "0.1.0"
+authors = ["Tyler Hall <tylerwhall@gmail.com>"]
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/tylerwhall/fanrf"
+
+[dependencies]
+spidev = "0.3"
