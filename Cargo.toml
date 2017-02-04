@@ -6,4 +6,5 @@ license = "MIT/Apache-2.0"
 homepage = "https://github.com/tylerwhall/fanrf"
 
 [dependencies]
+bitflags = "0.7"
 spidev = "0.3"
