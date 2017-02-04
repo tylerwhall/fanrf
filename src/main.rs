@@ -4,8 +4,24 @@ extern crate spidev;
 
 use std::fmt::Debug;
 use std::io::{self, Write};
+use std::ops::DerefMut;
 
 use spidev::{Spidev, SpidevOptions, SpidevTransfer};
+
+trait RegRw {
+    fn read(&mut self, reg: u8) -> io::Result<u8>;
+    fn write(&mut self, reg: u8, val: u8) -> io::Result<()>;
+}
+
+// Not sure why this is required
+impl<T: RegRw + ?Sized> RegRw for Box<T> {
+    fn read(&mut self, reg: u8) -> io::Result<u8> {
+        self.deref_mut().read(reg)
+    }
+    fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
+        self.deref_mut().write(reg, val)
+    }
+}
 
 struct RfmRegs {
     spi: Spidev,
@@ -15,7 +31,9 @@ impl RfmRegs {
     fn new(spi: Spidev) -> Self {
         RfmRegs { spi: spi }
     }
+}
 
+impl RegRw for RfmRegs {
     fn read(&mut self, reg: u8) -> io::Result<u8> {
         let mut rbuf = [0u8, 0u8];
         let tbuf = [reg, 0u8];
@@ -24,6 +42,41 @@ impl RfmRegs {
 
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
         self.spi.write_all(&[reg | 0x80, val])
+    }
+}
+
+struct FakeRegs([u8; 0x80]);
+
+impl FakeRegs {
+    fn new() -> Self {
+        FakeRegs([0; 128])
+    }
+}
+
+impl RegRw for FakeRegs {
+    fn read(&mut self, reg: u8) -> io::Result<u8> {
+        Ok(self.0[reg as usize])
+    }
+
+    fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
+        self.0[reg as usize] = val;
+        Ok(())
+    }
+}
+
+struct RegLogger<R: RegRw>(pub R);
+
+impl<R: RegRw> RegRw for RegLogger<R> {
+    fn read(&mut self, reg: u8) -> io::Result<u8> {
+        self.0.read(reg).map(|val| {
+            println!("Reg read  0x{:02x} = 0x{:02x}", reg, val);
+            val
+        })
+    }
+
+    fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
+        println!("Reg write 0x{:02x} = 0x{:02x}", reg, val);
+        self.0.write(reg, val)
     }
 }
 
@@ -134,12 +187,16 @@ impl ModulationModeControl2 {
 }
 
 struct Rfm22 {
-    regs: RfmRegs,
+    regs: RegLogger<Box<RegRw>>,
 }
 
 impl Rfm22 {
-    fn new(spi: Spidev) -> Self {
-        Rfm22 { regs: RfmRegs::new(spi) }
+    pub fn new(spi: Spidev) -> Self {
+        Rfm22 { regs: RegLogger(Box::new(RfmRegs::new(spi))) }
+    }
+
+    pub fn dummy() -> Self {
+        Rfm22 { regs: RegLogger(Box::new(FakeRegs::new())) }
     }
 
     fn read<R: Rfm22Reg>(&mut self) -> io::Result<R> {
@@ -168,13 +225,17 @@ impl Rfm22 {
 }
 
 fn main() {
-    let mut spi = Spidev::open("/dev/spidev1.0").unwrap();
-    let options = SpidevOptions::new()
-        .max_speed_hz(10 * 1000 * 1000)
-        .build();
-    spi.configure(&options).unwrap();
+    let mut rf = if let Ok(mut spi) = Spidev::open("/dev/spidev1.0") {
+        let options = SpidevOptions::new()
+            .max_speed_hz(10 * 1000 * 1000)
+            .build();
+        spi.configure(&options).unwrap();
+        Rfm22::new(spi)
+    } else {
+        println!("Using dummy backend.");
+        Rfm22::dummy()
+    };
 
-    let mut rf = Rfm22::new(spi);
     rf.init();
     rf.set_modulation_type(ModulationType::OOK).unwrap();
 }
