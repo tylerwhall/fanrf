@@ -118,6 +118,10 @@ trait RfmReg {
 #[repr(u8)]
 #[derive(Clone, Copy)]
 enum Rfm22RegVal {
+    InterruptStatus1 = 0x3,
+    InterruptStatus2 = 0x4,
+    InterruptEnable1 = 0x5,
+    InterruptEnable2 = 0x6,
     OperatingFunctionControl1 = 0x7,
     OperatingFunctionControl2 = 0x8,
     DataAccessControl = 0x30,
@@ -173,6 +177,74 @@ macro_rules! rfreg {
     };
 }
 
+#[derive(PartialEq)]
+pub enum Interrupt {
+    CRCError = 0,
+    PkValid,
+    PkSent,
+    Ext,
+    RxFIFOAlmostFull,
+    TxFIFOAlmostEmpty,
+    TxFIFOAlmostFull,
+    FIFOError,
+    Por,
+    ChipRdy,
+    Lbd,
+    Wut,
+    Rssi,
+    Preainval,
+    Preaval,
+    Swdet,
+}
+
+rfreg! {
+    InterruptStatus1 {
+        ICRCERROR = 0,
+        IPKVALID = 1,
+        IPKSENT = 2,
+        IEXT = 3,
+        IRXFFAFULL = 4,
+        ITXFFAEM = 5,
+        ITXFFAFULL = 6,
+        IFFERR = 7
+    }
+}
+rfreg! {
+    InterruptStatus2 {
+        IPOR = 0,
+        ICHIPRDY = 1,
+        ILBDET = 2,
+        IWUT = 3,
+        IRSSI = 4,
+        IPREAINVAL = 5,
+        IPREAVAL = 6,
+        ISWDET = 7
+    }
+}
+rfreg! {
+    InterruptEnable1 {
+        ENCRCERROR = 0,
+        ENPKVALID = 1,
+        ENPKSENT = 2,
+        ENEXT = 3,
+        ENRXFFAFULL = 4,
+        ENTXFFAEM = 5,
+        ENTXFFAFULL = 6,
+        ENFFERR = 7
+    }
+}
+rfreg! {
+    InterruptEnable2 {
+        ENPOR = 0,
+        ENCHIPRDY = 1,
+        ENLBDET = 2,
+        ENWUT = 3,
+        ENRSSI = 4,
+        ENPREAINVAL = 5,
+        ENPREAVAL = 6,
+        ENSWDET = 7
+    }
+}
 rfreg! {
     DataAccessControl {
         CRC0 = 0,
@@ -523,6 +595,14 @@ impl Rfm22 {
         self.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
 
+    fn get_irq(&mut self) {
+        println!("{:?}", self.read::<InterruptStatus1>().unwrap());
+    }
+
+    fn setup_irq(&mut self) -> io::Result<()> {
+        self.write_validate(ENTXFFAEM)
+    }
+
     pub fn init(&mut self) {
         self.write_validate(XTON | PLLON).unwrap();
     }
@@ -547,11 +627,16 @@ fn main() {
     rf.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
+    rf.setup_irq().unwrap();
+    rf.get_irq();
     rf.clear_tx_fifo().unwrap();
     rf.write_tx_fifo(&[0xaa; 64]).unwrap();
+    rf.get_irq();
     rf.transmit().unwrap();
 
+    rf.get_irq();
     println!("Is transmitting = {}", rf.is_transmitting().unwrap());
     thread::sleep(Duration::from_millis(500));
     println!("Is transmitting = {}", rf.is_transmitting().unwrap());
+    rf.get_irq();
 }
