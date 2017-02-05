@@ -126,6 +126,7 @@ enum Rfm22RegVal {
     OperatingFunctionControl2 = 0x8,
     DataAccessControl = 0x30,
     HeaderControl2 = 0x33,
+    TxPower = 0x6d,
     TxDataRate1 = 0x6e,
     TxDataRate0 = 0x6f,
     ModulationModeControl1 = 0x70,
@@ -246,6 +247,30 @@ rfreg! {
     }
 }
 rfreg! {
+    OperatingFunctionControl1 {
+        XTON = 0,
+        PLLON = 1,
+        RXON = 2,
+        TXON = 3,
+        X32KSEL = 4,
+        ENWT = 5,
+        ENLBD = 6,
+        SWRES = 7
+    }
+}
+rfreg! {
+    OperatingFunctionControl2 {
+        FFCLRTX = 0,
+        FFCLRRX = 1,
+        ENLDM = 2,
+        AUTOTX = 3,
+        RXMPK = 4,
+        ANTDIV0 = 5,
+        ANTDIV1 = 6,
+        ANTDIV2 = 7
+    }
+}
+rfreg! {
     DataAccessControl {
         CRC0 = 0,
         CRC1 = 1,
@@ -270,29 +295,64 @@ rfreg! {
     }
 }
 rfreg! {
-    OperatingFunctionControl1 {
-        XTON = 0,
-        PLLON = 1,
-        RXON = 2,
-        TXON = 3,
-        X32KSEL = 4,
-        ENWT = 5,
-        ENLBD = 6,
-        SWRES = 7
+    TxPower {
+        TXPOW0 = 0,
+        TXPOW1 = 1,
+        TXPOW2 = 2,
+        LNA_SW = 3,
+        PAPEAKLV0 = 4,
+        PAPEAKLV1 = 5,
+        PAPEAKEN = 6,
+        PAPEAKVAL = 7
     }
 }
+
+impl TxPower {
+    fn set_tx_power(&mut self, power: u8) {
+        assert!(power <= 0x7);
+        self.remove(TXPOW2 | TXPOW1 | TXPOW0);
+        self.insert(Self::from_bits(power).unwrap());
+    }
+}
+
 rfreg! {
-    OperatingFunctionControl2 {
-        FFCLRTX = 0,
-        FFCLRRX = 1,
-        ENLDM = 2,
-        AUTOTX = 3,
-        RXMPK = 4,
-        ANTDIV0 = 5,
-        ANTDIV1 = 6,
-        ANTDIV2 = 7
+    TxDataRate1 {
+        TXDR8 = 0,
+        TXDR9 = 1,
+        TXDR10 = 2,
+        TXDR11 = 3,
+        TXDR12 = 4,
+        TXDR13 = 5,
+        TXDR14 = 6,
+        TXDR15 = 7
     }
 }
+
+impl TxDataRate1 {
+    fn from_txdr(val: u16) -> Self {
+        Self::from_bits((val >> 8) as u8).unwrap()
+    }
+}
+
+rfreg! {
+    TxDataRate0 {
+        TXDR0 = 0,
+        TXDR1 = 1,
+        TXDR2 = 2,
+        TXDR3 = 3,
+        TXDR4 = 4,
+        TXDR5 = 5,
+        TXDR6 = 6,
+        TXDR7 = 7
+    }
+}
+
+impl TxDataRate0 {
+    fn from_txdr(val: u16) -> Self {
+        Self::from_bits(val as u8).unwrap()
+    }
+}
+
 rfreg! {
     ModulationModeControl1 {
         ENWHITE = 0,
@@ -353,24 +413,6 @@ impl ModulationModeControl2 {
 }
 
 rfreg! {
-    FrequencyBandSelect {
-        FB0 = 0,
-        FB1 = 1,
-        FB2 = 2,
-        FB3 = 3,
-        FB4 = 4,
-        HBSEL = 5,
-        SBSEL = 6
-    }
-}
-
-impl FrequencyBandSelect {
-    fn from_band(band: u8) -> Self {
-        Self::from_bits(band as u8).unwrap()
-    }
-}
-
-rfreg! {
     FrequencyOffset1 {
         FO0 = 0,
         FO1 = 1,
@@ -399,6 +441,24 @@ rfreg! {
 impl FrequencyOffset2 {
     fn from_frequency_offset(val: u16) -> Self {
         Self::from_bits((val >> 8) as u8).unwrap()
+    }
+}
+
+rfreg! {
+    FrequencyBandSelect {
+        FB0 = 0,
+        FB1 = 1,
+        FB2 = 2,
+        FB3 = 3,
+        FB4 = 4,
+        HBSEL = 5,
+        SBSEL = 6
+    }
+}
+
+impl FrequencyBandSelect {
+    fn from_band(band: u8) -> Self {
+        Self::from_bits(band as u8).unwrap()
     }
 }
 
@@ -436,44 +496,6 @@ rfreg! {
 
 impl CarrierFrequency0 {
     fn from_carrier(val: u16) -> Self {
-        Self::from_bits(val as u8).unwrap()
-    }
-}
-
-rfreg! {
-    TxDataRate1 {
-        TXDR8 = 0,
-        TXDR9 = 1,
-        TXDR10 = 2,
-        TXDR11 = 3,
-        TXDR12 = 4,
-        TXDR13 = 5,
-        TXDR14 = 6,
-        TXDR15 = 7
-    }
-}
-
-impl TxDataRate1 {
-    fn from_txdr(val: u16) -> Self {
-        Self::from_bits((val >> 8) as u8).unwrap()
-    }
-}
-
-rfreg! {
-    TxDataRate0 {
-        TXDR0 = 0,
-        TXDR1 = 1,
-        TXDR2 = 2,
-        TXDR3 = 3,
-        TXDR4 = 4,
-        TXDR5 = 5,
-        TXDR6 = 6,
-        TXDR7 = 7
-    }
-}
-
-impl TxDataRate0 {
-    fn from_txdr(val: u16) -> Self {
         Self::from_bits(val as u8).unwrap()
     }
 }
@@ -523,6 +545,12 @@ impl Rfm22 {
         self.modify_verify(|reg: &mut ModulationModeControl2| {
             reg.set_modtype(ty);
             reg.set_data_source(source);
+        })
+    }
+
+    fn set_tx_power(&mut self, power: u8) -> io::Result<()> {
+        self.modify_verify(|reg: &mut TxPower| {
+            reg.set_tx_power(power)
         })
     }
 
@@ -840,6 +868,7 @@ fn main() {
     rf.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
+    rf.set_tx_power(3);
     /*
     rf.setup_irq().unwrap();
     println!("IRQ: {:?}", rf.get_irq());
