@@ -8,9 +8,12 @@ use std::ops::DerefMut;
 
 use spidev::{Spidev, SpidevOptions, SpidevTransfer};
 
+const FIFO_SIZE: usize = 64;
+
 trait RegRw {
     fn read(&mut self, reg: u8) -> io::Result<u8>;
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()>;
+    fn burst_write(&mut self, reg: u8, val: &[u8]) -> io::Result<()>;
 }
 
 // Not sure why this is required
@@ -20,6 +23,9 @@ impl<T: RegRw + ?Sized> RegRw for Box<T> {
     }
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
         self.deref_mut().write(reg, val)
+    }
+    fn burst_write(&mut self, reg: u8, val: &[u8]) -> io::Result<()> {
+        self.deref_mut().burst_write(reg, val)
     }
 }
 
@@ -43,6 +49,12 @@ impl RegRw for RfmRegs {
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
         self.spi.write_all(&[reg | 0x80, val])
     }
+
+    fn burst_write(&mut self, reg: u8, val: &[u8]) -> io::Result<()> {
+        let addr = [reg | 0x80];
+        let mut tx = [SpidevTransfer::write(&addr), SpidevTransfer::write(val)];
+        self.spi.transfer_multiple(&mut tx)
+    }
 }
 
 struct FakeRegs([u8; 0x80]);
@@ -62,6 +74,17 @@ impl RegRw for FakeRegs {
         self.0[reg as usize] = val;
         Ok(())
     }
+
+    fn burst_write(&mut self, mut reg: u8, val: &[u8]) -> io::Result<()> {
+        for byte in val {
+            self.0[reg as usize] = *byte;
+            if reg < 0x7f {
+                // Auto-increment unless this is the fifo register
+                reg += 1;
+            }
+        }
+        Ok(())
+    }
 }
 
 struct RegLogger<R: RegRw>(pub R);
@@ -77,6 +100,11 @@ impl<R: RegRw> RegRw for RegLogger<R> {
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
         println!("Reg write 0x{:02x} = 0x{:02x}", reg, val);
         self.0.write(reg, val)
+    }
+
+    fn burst_write(&mut self, reg: u8, val: &[u8]) -> io::Result<()> {
+        println!("Burst({:2}) 0x{:02x} = {:?}", val.len(), reg, val);
+        self.0.burst_write(reg, val)
     }
 }
 
@@ -101,6 +129,7 @@ enum Rfm22RegVal {
     FrequencyBandSelect = 0x75,
     CarrierFrequency1 = 0x76,
     CarrierFrequency0 = 0x77,
+    FIFOAccess = 0x7f,
 }
 
 trait Rfm22Reg: Sized + PartialEq + Debug + Copy {
@@ -471,6 +500,10 @@ impl Rfm22 {
         })
     }
 
+    fn write_tx_fifo(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.regs.burst_write(Rfm22RegVal::FIFOAccess as u8, buf)
+    }
+
     pub fn init(&mut self) {
         self.write_validate(XTON | PLLON).unwrap();
     }
@@ -496,4 +529,5 @@ fn main() {
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
     rf.clear_tx_fifo().unwrap();
+    rf.write_tx_fifo(&[0xaa; 64]).unwrap();
 }
