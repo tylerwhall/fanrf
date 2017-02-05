@@ -864,7 +864,7 @@ fn main() {
 
     let pkt = FanPkt12::new(0x9, FanCmd12::Light);
     let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
-                                 .chain(std::iter::repeat(false).take(9 * 3))) // 9ms pause between commands. 1/3ms symbol period
+                                 .chain(std::iter::repeat(false).take(11 * 3))) // 11ms pause between commands. 1/3ms symbol period
         .cycle()
         .take(20)
         .flat_map(|i| i);
