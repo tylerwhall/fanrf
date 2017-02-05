@@ -93,6 +93,11 @@ enum Rfm22RegVal {
     OperatingFunctionControl1 = 0x7,
     ModulationModeControl1 = 0x70,
     ModulationModeControl2 = 0x71,
+    FrequencyOffset1 = 0x73,
+    FrequencyOffset2 = 0x74,
+    FrequencyBandSelect = 0x75,
+    CarrierFrequency1 = 0x76,
+    CarrierFrequency0 = 0x77,
 }
 
 trait Rfm22Reg: Sized + PartialEq + Debug + Copy {
@@ -229,6 +234,94 @@ impl ModulationModeControl2 {
     }
 }
 
+rfreg! {
+    FrequencyBandSelect {
+        FB0 = 0,
+        FB1 = 1,
+        FB2 = 2,
+        FB3 = 3,
+        FB4 = 4,
+        HBSEL = 5,
+        SBSEL = 6
+    }
+}
+
+impl FrequencyBandSelect {
+    fn from_band(band: u8) -> Self {
+        Self::from_bits(band as u8).unwrap()
+    }
+}
+
+rfreg! {
+    FrequencyOffset1 {
+        FO0 = 0,
+        FO1 = 1,
+        FO2 = 2,
+        FO3 = 3,
+        FO4 = 4,
+        FO5 = 5,
+        FO6 = 6,
+        FO7 = 7
+    }
+}
+
+impl FrequencyOffset1 {
+    fn from_frequency_offset(val: u16) -> Self {
+        Self::from_bits(val as u8).unwrap()
+    }
+}
+
+rfreg! {
+    FrequencyOffset2 {
+        FO8 = 0,
+        FO9 = 1
+    }
+}
+
+impl FrequencyOffset2 {
+    fn from_frequency_offset(val: u16) -> Self {
+        Self::from_bits((val >> 8) as u8).unwrap()
+    }
+}
+
+rfreg! {
+    CarrierFrequency1 {
+        FC8 = 0,
+        FC9 = 1,
+        FC10 = 2,
+        FC11 = 3,
+        FC12 = 4,
+        FC13 = 5,
+        FC14 = 6,
+        FC15 = 7
+    }
+}
+
+impl CarrierFrequency1 {
+    fn from_carrier(val: u16) -> Self {
+        Self::from_bits((val >> 8) as u8).unwrap()
+    }
+}
+
+rfreg! {
+    CarrierFrequency0 {
+        FC0 = 0,
+        FC1 = 1,
+        FC2 = 2,
+        FC3 = 3,
+        FC4 = 4,
+        FC5 = 5,
+        FC6 = 6,
+        FC7 = 7
+    }
+}
+
+impl CarrierFrequency0 {
+    fn from_carrier(val: u16) -> Self {
+        Self::from_bits(val as u8).unwrap()
+    }
+}
+
 struct Rfm22 {
     regs: RegLogger<Box<RegRw>>,
 }
@@ -263,6 +356,37 @@ impl Rfm22 {
         self.write_validate(reg)
     }
 
+    fn set_freq_mhz(&mut self, freq: f64) -> io::Result<()> {
+        let band = (freq as u32 - 240) / 10;
+        assert!(band <= 0x1f);
+
+        let mut bandsel = FrequencyBandSelect::from_band(band as u8);
+        if freq >= 480.0 {
+            bandsel |= HBSEL;
+        }
+
+        let foffset = 0;
+
+        let mut fcarrier = freq;
+        if bandsel.contains(HBSEL) {
+            fcarrier /= 20.0;
+        } else {
+            fcarrier /= 10.0;
+        }
+        fcarrier -= (band + 24) as f64;
+        fcarrier *= 64000.0;
+        println!("Fcarrier {}", fcarrier);
+        let fcarrier = fcarrier as u64;
+        println!("Fcarrier {}", fcarrier);
+        assert!(fcarrier <= 0xffff);
+
+        self.write_validate(bandsel)?;
+        self.write_validate(FrequencyOffset1::from_frequency_offset(foffset))?;
+        self.write_validate(FrequencyOffset2::from_frequency_offset(foffset))?;
+        self.write_validate(CarrierFrequency0::from_carrier(fcarrier as u16))?;
+        self.write_validate(CarrierFrequency1::from_carrier(fcarrier as u16))
+    }
+
     pub fn init(&mut self) {
         self.write_validate(XTON | PLLON).unwrap();
     }
@@ -285,4 +409,5 @@ fn main() {
     rf.write_validate(DataAccessControl::empty()).unwrap();
     // HeaderControl2
     rf.write_validate(SKIPSYN).unwrap();
+    rf.set_freq_mhz(303.8).unwrap();
 }
