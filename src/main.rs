@@ -88,9 +88,10 @@ trait RfmReg {
 #[repr(u8)]
 #[derive(Clone, Copy)]
 enum Rfm22RegVal {
+    OperatingFunctionControl1 = 0x7,
+    OperatingFunctionControl2 = 0x8,
     DataAccessControl = 0x30,
     HeaderControl2 = 0x33,
-    OperatingFunctionControl1 = 0x7,
     TxDataRate1 = 0x6e,
     TxDataRate0 = 0x6f,
     ModulationModeControl1 = 0x70,
@@ -175,6 +176,18 @@ rfreg! {
         ENWT = 5,
         ENLBD = 6,
         SWRES = 7
+    }
+}
+rfreg! {
+    OperatingFunctionControl2 {
+        FFCLRTX = 0,
+        FFCLRRX = 1,
+        ENLDM = 2,
+        AUTOTX = 3,
+        RXMPK = 4,
+        ANTDIV0 = 5,
+        ANTDIV1 = 6,
+        ANTDIV2 = 7
     }
 }
 rfreg! {
@@ -449,6 +462,15 @@ impl Rfm22 {
         self.write_validate(TxDataRate0::from_txdr(txdr as u16))
     }
 
+    fn clear_tx_fifo(&mut self) -> io::Result<()> {
+        self.modify(|reg: &mut OperatingFunctionControl2| {
+            reg.insert(FFCLRTX);
+        })?;
+        self.modify(|reg: &mut OperatingFunctionControl2| {
+            reg.remove(FFCLRTX);
+        })
+    }
+
     pub fn init(&mut self) {
         self.write_validate(XTON | PLLON).unwrap();
     }
@@ -473,4 +495,5 @@ fn main() {
     rf.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
+    rf.clear_tx_fifo().unwrap();
 }
