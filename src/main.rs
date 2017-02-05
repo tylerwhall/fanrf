@@ -91,6 +91,8 @@ enum Rfm22RegVal {
     DataAccessControl = 0x30,
     HeaderControl2 = 0x33,
     OperatingFunctionControl1 = 0x7,
+    TxDataRate1 = 0x6e,
+    TxDataRate0 = 0x6f,
     ModulationModeControl1 = 0x70,
     ModulationModeControl2 = 0x71,
     FrequencyOffset1 = 0x73,
@@ -322,6 +324,44 @@ impl CarrierFrequency0 {
     }
 }
 
+rfreg! {
+    TxDataRate1 {
+        TXDR8 = 0,
+        TXDR9 = 1,
+        TXDR10 = 2,
+        TXDR11 = 3,
+        TXDR12 = 4,
+        TXDR13 = 5,
+        TXDR14 = 6,
+        TXDR15 = 7
+    }
+}
+
+impl TxDataRate1 {
+    fn from_txdr(val: u16) -> Self {
+        Self::from_bits((val >> 8) as u8).unwrap()
+    }
+}
+
+rfreg! {
+    TxDataRate0 {
+        TXDR0 = 0,
+        TXDR1 = 1,
+        TXDR2 = 2,
+        TXDR3 = 3,
+        TXDR4 = 4,
+        TXDR5 = 5,
+        TXDR6 = 6,
+        TXDR7 = 7
+    }
+}
+
+impl TxDataRate0 {
+    fn from_txdr(val: u16) -> Self {
+        Self::from_bits(val as u8).unwrap()
+    }
+}
+
 struct Rfm22 {
     regs: RegLogger<Box<RegRw>>,
 }
@@ -347,7 +387,7 @@ impl Rfm22 {
         where F: FnOnce(&mut R) {
             let mut val = self.read()?;
             f(&mut val);
-            self.write(val)
+            self.write_validate(val)
     }
 
     fn write_validate<R: Rfm22Reg>(&mut self, val: R) -> io::Result<()> {
@@ -357,10 +397,10 @@ impl Rfm22 {
     }
 
     fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
-        let mut reg: ModulationModeControl2 = self.read()?;
-        reg.set_modtype(ty);
-        reg.set_data_source(source);
-        self.write_validate(reg)
+        self.modify(|reg: &mut ModulationModeControl2| {
+            reg.set_modtype(ty);
+            reg.set_data_source(source);
+        })
     }
 
     fn set_freq_mhz(&mut self, freq: f64) -> io::Result<()> {
@@ -390,8 +430,23 @@ impl Rfm22 {
         self.write_validate(bandsel)?;
         self.write_validate(FrequencyOffset1::from_frequency_offset(foffset))?;
         self.write_validate(FrequencyOffset2::from_frequency_offset(foffset))?;
-        self.write_validate(CarrierFrequency0::from_carrier(fcarrier as u16))?;
-        self.write_validate(CarrierFrequency1::from_carrier(fcarrier as u16))
+        self.write_validate(CarrierFrequency1::from_carrier(fcarrier as u16))?;
+        self.write_validate(CarrierFrequency0::from_carrier(fcarrier as u16))
+    }
+
+    fn set_data_rate_hz(&mut self, rate: f64) -> io::Result<()> {
+        let scale = rate < 30000.0;
+        self.modify(|mc1: &mut ModulationModeControl1| {
+            if scale {
+                *mc1 |= TXDRTSCALE;
+            }
+        })?;
+        let exp = if scale { 16 + 5 } else { 16 };
+        let txdr = rate * (1 << exp) as f64;
+        let txdr = (txdr / 1000000.0) as u64;
+        assert!(txdr <= 0xffff);
+        self.write_validate(TxDataRate1::from_txdr(txdr as u16))?;
+        self.write_validate(TxDataRate0::from_txdr(txdr as u16))
     }
 
     pub fn init(&mut self) {
@@ -417,4 +472,5 @@ fn main() {
     // HeaderControl2
     rf.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
+    rf.set_data_rate_hz(3000.0).unwrap();
 }
