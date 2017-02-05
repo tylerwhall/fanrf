@@ -5,6 +5,8 @@ extern crate spidev;
 use std::fmt::Debug;
 use std::io::{self, Write};
 use std::ops::DerefMut;
+use std::thread;
+use std::time::Duration;
 
 use spidev::{Spidev, SpidevOptions, SpidevTransfer};
 
@@ -429,6 +431,13 @@ impl Rfm22 {
         where F: FnOnce(&mut R) {
             let mut val = self.read()?;
             f(&mut val);
+            self.write(val)
+    }
+
+    fn modify_verify<R: Rfm22Reg, F>(&mut self, f: F) -> io::Result<()>
+        where F: FnOnce(&mut R) {
+            let mut val = self.read()?;
+            f(&mut val);
             self.write_validate(val)
     }
 
@@ -439,7 +448,7 @@ impl Rfm22 {
     }
 
     fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
-        self.modify(|reg: &mut ModulationModeControl2| {
+        self.modify_verify(|reg: &mut ModulationModeControl2| {
             reg.set_modtype(ty);
             reg.set_data_source(source);
         })
@@ -478,7 +487,7 @@ impl Rfm22 {
 
     fn set_data_rate_hz(&mut self, rate: f64) -> io::Result<()> {
         let scale = rate < 30000.0;
-        self.modify(|mc1: &mut ModulationModeControl1| {
+        self.modify_verify(|mc1: &mut ModulationModeControl1| {
             if scale {
                 *mc1 |= TXDRTSCALE;
             }
@@ -492,16 +501,26 @@ impl Rfm22 {
     }
 
     fn clear_tx_fifo(&mut self) -> io::Result<()> {
-        self.modify(|reg: &mut OperatingFunctionControl2| {
+        self.modify_verify(|reg: &mut OperatingFunctionControl2| {
             reg.insert(FFCLRTX);
         })?;
-        self.modify(|reg: &mut OperatingFunctionControl2| {
+        self.modify_verify(|reg: &mut OperatingFunctionControl2| {
             reg.remove(FFCLRTX);
         })
     }
 
     fn write_tx_fifo(&mut self, buf: &[u8]) -> io::Result<()> {
         self.regs.burst_write(Rfm22RegVal::FIFOAccess as u8, buf)
+    }
+
+    fn transmit(&mut self) -> io::Result<()> {
+        self.modify(|reg: &mut OperatingFunctionControl1| {
+            reg.insert(TXON)
+        })
+    }
+
+    fn is_transmitting(&mut self) -> io::Result<bool> {
+        self.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
 
     pub fn init(&mut self) {
@@ -530,4 +549,9 @@ fn main() {
     rf.set_data_rate_hz(3000.0).unwrap();
     rf.clear_tx_fifo().unwrap();
     rf.write_tx_fifo(&[0xaa; 64]).unwrap();
+    rf.transmit().unwrap();
+
+    println!("Is transmitting = {}", rf.is_transmitting().unwrap());
+    thread::sleep(Duration::from_millis(500));
+    println!("Is transmitting = {}", rf.is_transmitting().unwrap());
 }
