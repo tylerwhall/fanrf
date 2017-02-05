@@ -343,6 +343,13 @@ impl Rfm22 {
         self.regs.write(R::regval(), val.bits())
     }
 
+    fn modify<R: Rfm22Reg, F>(&mut self, f: F) -> io::Result<()>
+        where F: FnOnce(&mut R) {
+            let mut val = self.read()?;
+            f(&mut val);
+            self.write(val)
+    }
+
     fn write_validate<R: Rfm22Reg>(&mut self, val: R) -> io::Result<()> {
         self.write(val)?;
         assert_eq!(val, self.read().unwrap());
