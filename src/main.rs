@@ -591,16 +591,66 @@ impl Rfm22 {
         })
     }
 
+    fn transmit_large<'a, I: IntoIterator<Item=&'a u8>>(&mut self, iter: I) -> io::Result<()> {
+        // The almost empty IRQ happens at 4 by default. Leave some extra space
+        // so we can never fill the FIFO completely. This could probably be
+        // exactly 4, but I don't know how the boundary conditions work in HW.
+        let mut buf = Vec::with_capacity(FIFO_SIZE - 10);
+        let capacity = buf.capacity();
+        let mut iter = iter.into_iter().peekable();
+
+        println!("Iter[0] {:?}", iter.peek());
+        buf.extend(iter.by_ref().take(capacity));
+        if buf.len() == 0 {
+            println!("Zero length transmit!");
+            return Ok(());
+        }
+        self.setup_irq()?;
+        // Clear pending IRQs
+        self.get_irq()?;
+        self.write_tx_fifo(&buf)?;
+        // Start transmitter
+        self.transmit()?;
+        let mut irq = self.get_irq()?;
+        while let Some(_) = iter.peek() {
+            let mut timeout = 0;
+            irq = self.get_irq()?;
+            while !irq.contains(ITXFFAEM) {
+                thread::sleep(Duration::from_millis(1)); // XXX hardcoded
+                irq = self.get_irq()?;
+                timeout += 1;
+                if timeout > 1000 {
+                    println!("Timed out");
+                    return Ok(());
+                }
+            }
+            buf.clear();
+            buf.extend(iter.by_ref().take(capacity));
+            self.write_tx_fifo(&buf)?;
+        }
+        let mut timeout = 0;
+        while !irq.contains(IPKSENT) {
+            thread::sleep(Duration::from_millis(1)); // XXX hardcoded
+            irq = self.get_irq()?;
+            timeout += 1;
+            if timeout > 1000 {
+                println!("Timed out");
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     fn is_transmitting(&mut self) -> io::Result<bool> {
         self.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
 
-    fn get_irq(&mut self) {
-        println!("{:?}", self.read::<InterruptStatus1>().unwrap());
+    fn get_irq(&mut self) -> io::Result<InterruptStatus1> {
+        self.read()
     }
 
     fn setup_irq(&mut self) -> io::Result<()> {
-        self.write_validate(ENTXFFAEM)
+        self.write_validate(ENPKSENT | ENTXFFAEM)
     }
 
     pub fn init(&mut self) {
@@ -617,7 +667,10 @@ fn main() {
         Rfm22::new(spi)
     } else {
         println!("Using dummy backend.");
-        Rfm22::dummy()
+        // Set FIFO to almost empty to we don't get stuck waiting on it
+        let mut rf = Rfm22::dummy();
+        rf.write(ITXFFAEM).unwrap();
+        rf
     };
 
     rf.init();
@@ -628,15 +681,22 @@ fn main() {
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
     rf.setup_irq().unwrap();
-    rf.get_irq();
+    println!("IRQ: {:?}", rf.get_irq());
     rf.clear_tx_fifo().unwrap();
     rf.write_tx_fifo(&[0xaa; 64]).unwrap();
-    rf.get_irq();
+    println!("IRQ: {:?}", rf.get_irq());
     rf.transmit().unwrap();
 
-    rf.get_irq();
+    /*
+    println!("IRQ: {:?}", rf.get_irq());
     println!("Is transmitting = {}", rf.is_transmitting().unwrap());
     thread::sleep(Duration::from_millis(500));
     println!("Is transmitting = {}", rf.is_transmitting().unwrap());
-    rf.get_irq();
+    println!("IRQ: {:?}", rf.get_irq());
+    */
+
+    let buf = [0xaau8; 256];
+    rf.transmit_large(&buf[..]).unwrap();
+
+    println!("Is transmitting = {}", rf.is_transmitting().unwrap());
 }
