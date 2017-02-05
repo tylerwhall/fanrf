@@ -88,6 +88,8 @@ trait RfmReg {
 #[repr(u8)]
 #[derive(Clone, Copy)]
 enum Rfm22RegVal {
+    DataAccessControl = 0x30,
+    HeaderControl2 = 0x33,
     OperatingFunctionControl1 = 0x7,
     ModulationModeControl1 = 0x70,
     ModulationModeControl2 = 0x71,
@@ -133,6 +135,30 @@ macro_rules! rfreg {
 }
 
 rfreg! {
+    DataAccessControl {
+        CRC0 = 0,
+        CRC1 = 1,
+        ENCRC = 2,
+        ENPACTX = 3,
+        SKIP2PH = 4,
+        CRCDONLY = 5,
+        LSBFIRST = 6,
+        ENPACRX = 7
+    }
+}
+rfreg! {
+    HeaderControl2 {
+        PREALEN8 = 0,
+        SYNCLEN0 = 1,
+        SYNCLEN1 = 2,
+        FIXPKLEN = 3,
+        HDLEN0 = 4,
+        HDLEN1 = 5,
+        HDLEN2 = 6,
+        SKIPSYN = 7
+    }
+}
+rfreg! {
     OperatingFunctionControl1 {
         XTON = 0,
         PLLON = 1,
@@ -174,6 +200,13 @@ pub enum ModulationType {
     GFSK,
 }
 
+pub enum DataSource {
+    DirectGPIO,
+    DirectSDI,
+    FIFO,
+    PN9,
+}
+
 impl ModulationModeControl2 {
     pub fn set_modtype(&mut self, ty: ModulationType) {
         self.remove(MODTYP0 | MODTYP1);
@@ -182,6 +215,16 @@ impl ModulationModeControl2 {
             ModulationType::OOK => MODTYP0,
             ModulationType::FSK => MODTYP1,
             ModulationType::GFSK => MODTYP1 | MODTYP0,
+        });
+    }
+
+    pub fn set_data_source(&mut self, source: DataSource) {
+        self.remove(DTMOD0 | DTMOD1);
+        self.insert(match source {
+            DataSource::DirectGPIO => Self::empty(),
+            DataSource::DirectSDI => DTMOD0,
+            DataSource::FIFO => DTMOD1,
+            DataSource::PN9 => DTMOD1 | DTMOD0,
         });
     }
 }
@@ -213,9 +256,10 @@ impl Rfm22 {
         Ok(())
     }
 
-    fn set_modulation_type(&mut self, ty: ModulationType) -> io::Result<()> {
+    fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
         let mut reg: ModulationModeControl2 = self.read()?;
         reg.set_modtype(ty);
+        reg.set_data_source(source);
         self.write_validate(reg)
     }
 
@@ -237,5 +281,8 @@ fn main() {
     };
 
     rf.init();
-    rf.set_modulation_type(ModulationType::OOK).unwrap();
+    rf.set_modulation_type_and_source(ModulationType::OOK, DataSource::FIFO).unwrap();
+    rf.write_validate(DataAccessControl::empty()).unwrap();
+    // HeaderControl2
+    rf.write_validate(SKIPSYN).unwrap();
 }
