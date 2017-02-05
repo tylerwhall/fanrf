@@ -591,7 +591,7 @@ impl Rfm22 {
         })
     }
 
-    fn transmit_large<'a, I: IntoIterator<Item=&'a u8>>(&mut self, iter: I) -> io::Result<()> {
+    fn transmit_large<'a, I: IntoIterator<Item=u8>>(&mut self, iter: I) -> io::Result<()> {
         // The almost empty IRQ happens at 4 by default. Leave some extra space
         // so we can never fill the FIFO completely. This could probably be
         // exactly 4, but I don't know how the boundary conditions work in HW.
@@ -605,6 +605,7 @@ impl Rfm22 {
             println!("Zero length transmit!");
             return Ok(());
         }
+        self.clear_tx_fifo()?;
         self.setup_irq()?;
         // Clear pending IRQs
         self.get_irq()?;
@@ -641,6 +642,10 @@ impl Rfm22 {
         Ok(())
     }
 
+    fn transmit_bitstream<'a, I: IntoIterator<Item=bool>>(&mut self, iter: I) -> io::Result<()> {
+        self.transmit_large(BitsToBytes(iter.into_iter()))
+    }
+
     fn is_transmitting(&mut self) -> io::Result<bool> {
         self.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
@@ -655,6 +660,161 @@ impl Rfm22 {
 
     pub fn init(&mut self) {
         self.write_validate(XTON | PLLON).unwrap();
+    }
+}
+
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum FanCmd12 {
+    Light = 1,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FanPkt12 {
+    addr: u8,
+    cmd: u8,
+}
+
+impl FanPkt12 {
+    fn new(addr: u8, cmd: FanCmd12) -> Self {
+        FanPkt12 {
+            addr: addr,
+            cmd: cmd as u8,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a FanPkt12 {
+    type Item = bool;
+    type IntoIter = FanPkt12Bits<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        FanPkt12Bits::new(self)
+    }
+}
+
+#[derive(Clone)]
+struct FanPkt12Bits<'a> {
+    pkt: &'a FanPkt12,
+    count: u8,
+}
+
+impl<'a> FanPkt12Bits<'a> {
+    fn new(pkt: &'a FanPkt12) -> Self {
+        FanPkt12Bits {
+            pkt: pkt,
+            count: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for FanPkt12Bits<'a> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ret = match self.count {
+            0 => Some(false), // Start bit
+            1 => Some(true), // First bit is a 1
+            2...5 => Some((self.pkt.addr & (1 << (3 - (self.count - 2))) != 0)),
+            6...12 => Some((self.pkt.cmd as u8 & (1 << (6 - (self.count - 6))) != 0)),
+            _ => return None
+        };
+        self.count += 1;
+        ret
+    }
+}
+
+#[test]
+fn fan12_serializer() {
+    fn from_iter<I: Iterator<Item=bool>>(mut iter: I) -> FanPkt12 {
+        assert_eq!(iter.next().unwrap(), false); // Start bit
+        assert_eq!(iter.next().unwrap(), true); // First 1 bit
+        let addr = if iter.next().unwrap() { 1 << 3 } else { 0 } |
+            if iter.next().unwrap() { 1 << 2 } else { 0 } |
+            if iter.next().unwrap() { 1 << 1 } else { 0 } |
+            if iter.next().unwrap() { 1 << 0 } else { 0 };
+        let cmd = if iter.next().unwrap() { 1 << 6 } else { 0 } |
+            if iter.next().unwrap() { 1 << 5 } else { 0 } |
+            if iter.next().unwrap() { 1 << 4 } else { 0 } |
+            if iter.next().unwrap() { 1 << 3 } else { 0 } |
+            if iter.next().unwrap() { 1 << 2 } else { 0 } |
+            if iter.next().unwrap() { 1 << 1 } else { 0 } |
+            if iter.next().unwrap() { 1 << 0 } else { 0 };
+        assert!(iter.next().is_none());
+        FanPkt12 { addr: addr, cmd: cmd }
+    }
+    for addr in 0..16 {
+        for cmd in 0..128 {
+            let pkt = FanPkt12 { addr: addr, cmd: cmd };
+            assert_eq!(pkt.clone(), from_iter(pkt.into_iter()));
+        }
+    }
+}
+
+struct BitsToBytes<I: Iterator<Item=bool>>(I);
+
+impl<I: Iterator<Item=bool>> Iterator for BitsToBytes<I> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut val = 0;
+        if let Some(bit) = self.0.next() {
+            if bit {
+                val |= 1 << 7;
+            }
+        } else {
+            return None;
+        }
+        // Finish the byte if there was at least 1 bit
+        for idx in (0..7).into_iter().rev() {
+            if let Some(bit) = self.0.next() {
+                if bit {
+                    val |= 1 << idx;
+                }
+            }
+        }
+        Some(val)
+    }
+}
+
+#[derive(Clone)]
+enum FanExpandState {
+    Start,
+    Data,
+    End,
+}
+
+/// Adapts a data bit stream to 3 symbols per bit
+#[derive(Clone)]
+struct FanExpand<I: Iterator<Item=bool>>(I, FanExpandState);
+
+impl<I: Iterator<Item=bool>> FanExpand<I> {
+    fn new(iter: I) -> Self {
+        FanExpand(iter, FanExpandState::Start)
+    }
+}
+
+impl<I: Iterator<Item=bool>> Iterator for FanExpand<I> {
+    type Item = bool;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.1 {
+            FanExpandState::Start => {
+                let val = self.0.next();
+                if val.is_some() {
+                    self.1 = FanExpandState::Data;
+                }
+                val
+            }
+            FanExpandState::Data => {
+                self.1 = FanExpandState::End;
+                Some(true)
+            }
+            FanExpandState::End => {
+                self.1 = FanExpandState::Start;
+                Some(false)
+            }
+        }
     }
 }
 
@@ -680,12 +840,14 @@ fn main() {
     rf.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
+    /*
     rf.setup_irq().unwrap();
     println!("IRQ: {:?}", rf.get_irq());
     rf.clear_tx_fifo().unwrap();
     rf.write_tx_fifo(&[0xaa; 64]).unwrap();
     println!("IRQ: {:?}", rf.get_irq());
     rf.transmit().unwrap();
+    */
 
     /*
     println!("IRQ: {:?}", rf.get_irq());
@@ -695,8 +857,18 @@ fn main() {
     println!("IRQ: {:?}", rf.get_irq());
     */
 
+    /*
     let buf = [0xaau8; 256];
-    rf.transmit_large(&buf[..]).unwrap();
+    rf.transmit_large(buf[..].into_iter().cloned()).unwrap();
+    */
 
+    let pkt = FanPkt12::new(0x9, FanCmd12::Light);
+    let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
+                                 .chain(std::iter::repeat(false).take(9 * 3))) // 9ms pause between commands. 1/3ms symbol period
+        .cycle()
+        .take(20)
+        .flat_map(|i| i);
+
+    rf.transmit_bitstream(bits).unwrap();
     println!("Is transmitting = {}", rf.is_transmitting().unwrap());
 }
