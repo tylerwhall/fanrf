@@ -398,17 +398,17 @@ impl CarrierFrequency0 {
     }
 }
 
-pub struct Rfm22 {
+pub struct Rfm22Regs {
     regs: RegLogger<Box<RegRw>>,
 }
 
-impl Rfm22 {
+impl Rfm22Regs {
     pub fn new(spi: Spidev) -> Self {
-        Rfm22 { regs: RegLogger(Box::new(RfmRegs::new(spi))) }
+        Rfm22Regs { regs: RegLogger(Box::new(RfmRegs::new(spi))) }
     }
 
     pub fn dummy() -> Self {
-        Rfm22 { regs: RegLogger(Box::new(FakeRegs::new())) }
+        Rfm22Regs { regs: RegLogger(Box::new(FakeRegs::new())) }
     }
 
     pub fn read<R: Rfm22Reg>(&mut self) -> io::Result<R> {
@@ -439,15 +439,33 @@ impl Rfm22 {
         Ok(())
     }
 
+    pub fn burst_write(&mut self, reg: Rfm22RegVal, buf: &[u8]) -> io::Result<()> {
+        self.regs.burst_write(reg as u8, buf)
+    }
+}
+
+pub struct Rfm22 {
+    pub regs: Rfm22Regs,
+}
+
+impl Rfm22 {
+    pub fn new(spi: Spidev) -> Self {
+        Rfm22 { regs: Rfm22Regs::new(spi) }
+    }
+
+    pub fn dummy() -> Self {
+        Rfm22 { regs: Rfm22Regs::dummy() }
+    }
+
     pub fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
-        self.modify_verify(|reg: &mut ModulationModeControl2| {
+        self.regs.modify_verify(|reg: &mut ModulationModeControl2| {
             reg.set_modtype(ty);
             reg.set_data_source(source);
         })
     }
 
     pub fn set_tx_power(&mut self, power: u8) -> io::Result<()> {
-        self.modify_verify(|reg: &mut TxPower| {
+        self.regs.modify_verify(|reg: &mut TxPower| {
             reg.set_tx_power(power)
         })
     }
@@ -476,16 +494,16 @@ impl Rfm22 {
         println!("Fcarrier {}", fcarrier);
         assert!(fcarrier <= 0xffff);
 
-        self.write_validate(bandsel)?;
-        self.write_validate(FrequencyOffset1::from_frequency_offset(foffset))?;
-        self.write_validate(FrequencyOffset2::from_frequency_offset(foffset))?;
-        self.write_validate(CarrierFrequency1::from_carrier(fcarrier as u16))?;
-        self.write_validate(CarrierFrequency0::from_carrier(fcarrier as u16))
+        self.regs.write_validate(bandsel)?;
+        self.regs.write_validate(FrequencyOffset1::from_frequency_offset(foffset))?;
+        self.regs.write_validate(FrequencyOffset2::from_frequency_offset(foffset))?;
+        self.regs.write_validate(CarrierFrequency1::from_carrier(fcarrier as u16))?;
+        self.regs.write_validate(CarrierFrequency0::from_carrier(fcarrier as u16))
     }
 
     pub fn set_data_rate_hz(&mut self, rate: f64) -> io::Result<()> {
         let scale = rate < 30000.0;
-        self.modify_verify(|mc1: &mut ModulationModeControl1| {
+        self.regs.modify_verify(|mc1: &mut ModulationModeControl1| {
             if scale {
                 *mc1 |= TXDRTSCALE;
             }
@@ -494,25 +512,25 @@ impl Rfm22 {
         let txdr = rate * (1 << exp) as f64;
         let txdr = (txdr / 1000000.0) as u64;
         assert!(txdr <= 0xffff);
-        self.write_validate(TxDataRate1::from_txdr(txdr as u16))?;
-        self.write_validate(TxDataRate0::from_txdr(txdr as u16))
+        self.regs.write_validate(TxDataRate1::from_txdr(txdr as u16))?;
+        self.regs.write_validate(TxDataRate0::from_txdr(txdr as u16))
     }
 
     fn clear_tx_fifo(&mut self) -> io::Result<()> {
-        self.modify_verify(|reg: &mut OperatingFunctionControl2| {
+        self.regs.modify_verify(|reg: &mut OperatingFunctionControl2| {
             reg.insert(FFCLRTX);
         })?;
-        self.modify_verify(|reg: &mut OperatingFunctionControl2| {
+        self.regs.modify_verify(|reg: &mut OperatingFunctionControl2| {
             reg.remove(FFCLRTX);
         })
     }
 
     fn write_tx_fifo(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.regs.burst_write(Rfm22RegVal::FIFOAccess as u8, buf)
+        self.regs.burst_write(Rfm22RegVal::FIFOAccess, buf)
     }
 
     fn transmit(&mut self) -> io::Result<()> {
-        self.modify(|reg: &mut OperatingFunctionControl1| {
+        self.regs.modify(|reg: &mut OperatingFunctionControl1| {
             reg.insert(TXON)
         })
     }
@@ -599,18 +617,18 @@ impl Rfm22 {
     }
 
     pub fn is_transmitting(&mut self) -> io::Result<bool> {
-        self.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
+        self.regs.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
 
     fn get_irq(&mut self) -> io::Result<InterruptStatus1> {
-        self.read()
+        self.regs.read()
     }
 
     fn setup_irq(&mut self) -> io::Result<()> {
-        self.write_validate(ENPKSENT | ENTXFFAEM)
+        self.regs.write_validate(ENPKSENT | ENTXFFAEM)
     }
 
     pub fn init(&mut self) {
-        self.write_validate(XTON | PLLON).unwrap();
+        self.regs.write_validate(XTON | PLLON).unwrap();
     }
 }

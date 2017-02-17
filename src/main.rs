@@ -153,9 +153,9 @@ fn main() {
 
     rf.init();
     rf.set_modulation_type_and_source(ModulationType::OOK, DataSource::FIFO).unwrap();
-    rf.write_validate(DataAccessControl::empty()).unwrap();
+    rf.regs.write_validate(DataAccessControl::empty()).unwrap();
     // HeaderControl2
-    rf.write_validate(SKIPSYN).unwrap();
+    rf.regs.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
     rf.set_tx_power(3);
