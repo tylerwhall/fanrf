@@ -130,6 +130,13 @@ rfreg! {
         ENFFERR = 7
     }
 }
+
+impl From<InterruptEnable1> for InterruptStatus1 {
+    fn from(val: InterruptEnable1) -> Self {
+        InterruptStatus1::from_bits_truncate(val.bits())
+    }
+}
+
 rfreg! {
     InterruptEnable2 {
         ENPOR = 0,
@@ -444,17 +451,81 @@ impl Rfm22Regs {
     }
 }
 
+struct Rfm22IRQs {
+    pending: InterruptStatus1,
+    enabled: InterruptEnable1,
+    dummy: bool,
+}
+
+impl Rfm22IRQs {
+    fn new() -> Self {
+        Rfm22IRQs {
+            pending: InterruptStatus1::empty(),
+            enabled: InterruptEnable1::empty(),
+            dummy: false,
+        }
+    }
+
+    fn dummy() -> Self {
+        Rfm22IRQs {
+            pending: InterruptStatus1::empty(),
+            enabled: InterruptEnable1::empty(),
+            dummy: true,
+        }
+    }
+
+    /// Returns all IRQs currently pending
+    fn poll(&mut self, regs: &mut Rfm22Regs) -> io::Result<InterruptStatus1> {
+        // Add new IRQs to the current pending set. Reading enabled IRQs clears
+        // them, so we need to remember what we've observed until we mark them
+        // as handled.
+        self.pending.insert(regs.read()?);
+        self.pending &= self.enabled.into();
+        if self.dummy {
+            return Ok(ITXFFAEM | IPKSENT)
+        } else {
+            Ok(self.pending)
+        }
+    }
+
+    fn handled(&mut self, irqs: InterruptStatus1) {
+        self.pending.remove(irqs)
+    }
+
+    /// Clears all enabled IRQs in hardware and clears all considered pending
+    fn clear(&mut self, regs: &mut Rfm22Regs) -> io::Result<()>  {
+        self.poll(regs).map(|pnd| self.handled(pnd))
+    }
+
+    fn set_enable(&mut self, regs: &mut Rfm22Regs, irqs: InterruptEnable1) -> io::Result<()> {
+        self.enabled = irqs;
+        // Clear pending that are not enabled
+        let mut toclear = InterruptStatus1::all();
+        toclear.remove(irqs.into());
+        self.pending.remove(toclear);
+
+        regs.write_validate(irqs)
+    }
+}
+
 pub struct Rfm22 {
     pub regs: Rfm22Regs,
+    irq: Rfm22IRQs,
 }
 
 impl Rfm22 {
     pub fn new(spi: Spidev) -> Self {
-        Rfm22 { regs: Rfm22Regs::new(spi) }
+        Rfm22 {
+            regs: Rfm22Regs::new(spi),
+            irq: Rfm22IRQs::new(),
+        }
     }
 
     pub fn dummy() -> Self {
-        Rfm22 { regs: Rfm22Regs::dummy() }
+        Rfm22 {
+            regs: Rfm22Regs::dummy(),
+            irq: Rfm22IRQs::dummy(),
+        }
     }
 
     pub fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
@@ -550,39 +621,39 @@ impl Rfm22 {
             return Ok(());
         }
         self.clear_tx_fifo()?;
-        self.setup_irq()?;
+        self.irq.set_enable(&mut self.regs, ENPKSENT | ENTXFFAEM)?;
         // Clear pending IRQs
-        self.get_irq()?;
+        self.irq.clear(&mut self.regs)?;
+
+        // Write initial data
         self.write_tx_fifo(&buf)?;
         // Start transmitter
         self.transmit()?;
-        let mut irq = self.get_irq()?;
         while let Some(_) = iter.peek() {
             let mut timeout = 0;
-            irq = self.get_irq()?;
-            while !irq.contains(ITXFFAEM) {
+            while !self.irq.poll(&mut self.regs)?.contains(ITXFFAEM) {
                 thread::sleep(Duration::from_millis(1)); // XXX hardcoded
-                irq = self.get_irq()?;
                 timeout += 1;
                 if timeout > 1000 {
                     println!("Timed out");
                     return Ok(());
                 }
             }
+            self.irq.handled(ITXFFAEM);
             buf.clear();
             buf.extend(iter.by_ref().take(capacity));
             self.write_tx_fifo(&buf)?;
         }
         let mut timeout = 0;
-        while !irq.contains(IPKSENT) {
+        while !self.irq.poll(&mut self.regs)?.contains(IPKSENT) {
             thread::sleep(Duration::from_millis(1)); // XXX hardcoded
-            irq = self.get_irq()?;
             timeout += 1;
             if timeout > 1000 {
                 println!("Timed out");
                 return Ok(());
             }
         }
+        self.irq.handled(IPKSENT);
         Ok(())
     }
 
@@ -618,14 +689,6 @@ impl Rfm22 {
 
     pub fn is_transmitting(&mut self) -> io::Result<bool> {
         self.regs.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
-    }
-
-    fn get_irq(&mut self) -> io::Result<InterruptStatus1> {
-        self.regs.read()
-    }
-
-    fn setup_irq(&mut self) -> io::Result<()> {
-        self.regs.write_validate(ENPKSENT | ENTXFFAEM)
     }
 
     pub fn init(&mut self) {
