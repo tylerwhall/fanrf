@@ -2,6 +2,7 @@
 extern crate bitflags;
 extern crate spidev;
 
+mod regrw;
 mod rfm;
 
 use spidev::{Spidev, SpidevOptions};
