@@ -8,3 +8,4 @@ homepage = "https://github.com/tylerwhall/fanrf"
 [dependencies]
 bitflags = "0.7"
 spidev = "0.3"
+sysfs_gpio = "0.5.0"
