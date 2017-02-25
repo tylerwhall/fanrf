@@ -85,18 +85,18 @@ pub struct RegLogger<R: RegRw>(pub R);
 impl<R: RegRw> RegRw for RegLogger<R> {
     fn read(&mut self, reg: u8) -> io::Result<u8> {
         self.0.read(reg).map(|val| {
-            println!("Reg read  0x{:02x} = 0x{:02x}", reg, val);
+            debug!("Reg read  0x{:02x} = 0x{:02x}", reg, val);
             val
         })
     }
 
     fn write(&mut self, reg: u8, val: u8) -> io::Result<()> {
-        println!("Reg write 0x{:02x} = 0x{:02x}", reg, val);
+        debug!("Reg write 0x{:02x} = 0x{:02x}", reg, val);
         self.0.write(reg, val)
     }
 
     fn burst_write(&mut self, reg: u8, val: &[u8]) -> io::Result<()> {
-        println!("Burst({:2}) 0x{:02x} = {:?}", val.len(), reg, val);
+        debug!("Burst({:2}) 0x{:02x} = {:?}", val.len(), reg, val);
         self.0.burst_write(reg, val)
     }
 }

@@ -12,7 +12,7 @@ mod rfm;
 
 use std::env;
 
-use clap::{Arg, App};
+use clap::{Arg, ArgMatches, App};
 use env_logger::LogBuilder;
 use log::LogLevelFilter;
 use spidev::{Spidev, SpidevOptions};
@@ -154,14 +154,16 @@ impl<I: Iterator<Item = bool>> Iterator for FanExpand<I> {
     }
 }
 
-fn main() {
-    let matches = App::new(crate_name!())
+macro_rules! SPIDEV_DEFAULT { () => ("/dev/spidev1.0") }
+
+fn arg_parse<'a>() -> ArgMatches<'a> {
+    App::new(crate_name!())
         .version(crate_version!())
         .author(crate_authors!())
         .arg(Arg::with_name("spidev")
             .short("s")
             .long("spidev")
-            .help("Linux spidev device. Deafults to /dev/spidev1.0")
+            .help(concat!("Linux spidev device. Deafults to ", SPIDEV_DEFAULT!()))
             .takes_value(true))
         .arg(Arg::with_name("irq")
             .short("i")
@@ -181,8 +183,10 @@ fn main() {
             .short("d")
             .long("debug")
             .help("Debug logging (implies debug)"))
-        .get_matches();
+        .get_matches()
+}
 
+fn log_init(matches: &ArgMatches) {
     let mut log_builder = LogBuilder::new();
     if let Ok(log) = env::var("RUST_LOG") {
         log_builder.parse(&log);
@@ -194,9 +198,13 @@ fn main() {
         log_builder.filter(None, LogLevelFilter::Warn);
     }
     log_builder.init().unwrap();
+}
 
-    let spidev_path = matches.value_of("spidev").unwrap_or("/dev/spidev1.0");
+fn main() {
+    let matches = arg_parse();
+    log_init(&matches);
 
+    let spidev_path = matches.value_of("spidev").unwrap_or(SPIDEV_DEFAULT!());
     let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
         let options = SpidevOptions::new()
             .max_speed_hz(10 * 1000 * 1000)
@@ -216,7 +224,7 @@ fn main() {
     rf.regs.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
-    rf.set_tx_power(3);
+    rf.set_tx_power(3).unwrap();
 
     let pkt = FanPkt12::new(0x9, FanCmd12::Light);
     let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
@@ -226,5 +234,4 @@ fn main() {
         .flat_map(|i| i);
 
     rf.transmit_bitstream(bits).unwrap();
-    println!("Is transmitting = {}", rf.is_transmitting().unwrap());
 }

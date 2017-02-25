@@ -562,9 +562,8 @@ impl Rfm22 {
         }
         fcarrier -= (band + 24) as f64;
         fcarrier *= 64000.0;
-        println!("Fcarrier {}", fcarrier);
         let fcarrier = fcarrier as u64;
-        println!("Fcarrier {}", fcarrier);
+        debug!("Fcarrier {}", fcarrier);
         assert!(fcarrier <= 0xffff);
 
         self.regs.write_validate(bandsel)?;
@@ -616,10 +615,9 @@ impl Rfm22 {
         let capacity = buf.capacity();
         let mut iter = iter.into_iter().peekable();
 
-        println!("Iter[0] {:?}", iter.peek());
         buf.extend(iter.by_ref().take(capacity));
         if buf.len() == 0 {
-            println!("Zero length transmit!");
+            error!("Zero length transmit!");
             return Ok(());
         }
         self.clear_tx_fifo()?;
@@ -637,7 +635,7 @@ impl Rfm22 {
                 thread::sleep(Duration::from_millis(1)); // XXX hardcoded
                 timeout += 1;
                 if timeout > 1000 {
-                    println!("Timed out");
+                    error!("Timed out");
                     return Ok(());
                 }
             }
@@ -651,7 +649,7 @@ impl Rfm22 {
             thread::sleep(Duration::from_millis(1)); // XXX hardcoded
             timeout += 1;
             if timeout > 1000 {
-                println!("Timed out");
+                error!("Timed out");
                 return Ok(());
             }
         }
@@ -689,10 +687,6 @@ impl Rfm22 {
         }
 
         self.transmit_large(BitsToBytes(iter.into_iter()))
-    }
-
-    pub fn is_transmitting(&mut self) -> io::Result<bool> {
-        self.regs.read().map(|val: OperatingFunctionControl1| val.contains(TXON))
     }
 
     pub fn init(&mut self) {
