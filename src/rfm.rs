@@ -72,27 +72,26 @@ macro_rules! rfreg {
     };
 }
 
-/*
-#[derive(PartialEq)]
-pub enum Interrupt {
-    CRCError = 0,
-    PkValid,
-    PkSent,
-    Ext,
-    RxFIFOAlmostFull,
-    TxFIFOAlmostEmpty,
-    TxFIFOAlmostFull,
-    FIFOError,
-    Por,
-    ChipRdy,
-    Lbd,
-    Wut,
-    Rssi,
-    Preainval,
-    Preaval,
-    Swdet,
-}
-*/
+// #[derive(PartialEq)]
+// pub enum Interrupt {
+// CRCError = 0,
+// PkValid,
+// PkSent,
+// Ext,
+// RxFIFOAlmostFull,
+// TxFIFOAlmostEmpty,
+// TxFIFOAlmostFull,
+// FIFOError,
+// Por,
+// ChipRdy,
+// Lbd,
+// Wut,
+// Rssi,
+// Preainval,
+// Preaval,
+// Swdet,
+// }
+//
 
 rfreg! {
     InterruptStatus1 {
@@ -427,17 +426,19 @@ impl Rfm22Regs {
     }
 
     pub fn modify<R: Rfm22Reg, F>(&mut self, f: F) -> io::Result<()>
-        where F: FnOnce(&mut R) {
-            let mut val = self.read()?;
-            f(&mut val);
-            self.write(val)
+        where F: FnOnce(&mut R)
+    {
+        let mut val = self.read()?;
+        f(&mut val);
+        self.write(val)
     }
 
     pub fn modify_verify<R: Rfm22Reg, F>(&mut self, f: F) -> io::Result<()>
-        where F: FnOnce(&mut R) {
-            let mut val = self.read()?;
-            f(&mut val);
-            self.write_validate(val)
+        where F: FnOnce(&mut R)
+    {
+        let mut val = self.read()?;
+        f(&mut val);
+        self.write_validate(val)
     }
 
     pub fn write_validate<R: Rfm22Reg>(&mut self, val: R) -> io::Result<()> {
@@ -482,7 +483,7 @@ impl Rfm22IRQs {
         self.pending.insert(regs.read()?);
         self.pending &= self.enabled.into();
         if self.dummy {
-            return Ok(ITXFFAEM | IPKSENT)
+            return Ok(ITXFFAEM | IPKSENT);
         } else {
             Ok(self.pending)
         }
@@ -493,7 +494,7 @@ impl Rfm22IRQs {
     }
 
     /// Clears all enabled IRQs in hardware and clears all considered pending
-    fn clear(&mut self, regs: &mut Rfm22Regs) -> io::Result<()>  {
+    fn clear(&mut self, regs: &mut Rfm22Regs) -> io::Result<()> {
         self.poll(regs).map(|pnd| self.handled(pnd))
     }
 
@@ -528,7 +529,10 @@ impl Rfm22 {
         }
     }
 
-    pub fn set_modulation_type_and_source(&mut self, ty: ModulationType, source: DataSource) -> io::Result<()> {
+    pub fn set_modulation_type_and_source(&mut self,
+                                          ty: ModulationType,
+                                          source: DataSource)
+                                          -> io::Result<()> {
         self.regs.modify_verify(|reg: &mut ModulationModeControl2| {
             reg.set_modtype(ty);
             reg.set_data_source(source);
@@ -536,9 +540,7 @@ impl Rfm22 {
     }
 
     pub fn set_tx_power(&mut self, power: u8) -> io::Result<()> {
-        self.regs.modify_verify(|reg: &mut TxPower| {
-            reg.set_tx_power(power)
-        })
+        self.regs.modify_verify(|reg: &mut TxPower| reg.set_tx_power(power))
     }
 
     pub fn set_freq_mhz(&mut self, freq: f64) -> io::Result<()> {
@@ -574,11 +576,12 @@ impl Rfm22 {
 
     pub fn set_data_rate_hz(&mut self, rate: f64) -> io::Result<()> {
         let scale = rate < 30000.0;
-        self.regs.modify_verify(|mc1: &mut ModulationModeControl1| {
-            if scale {
-                *mc1 |= TXDRTSCALE;
-            }
-        })?;
+        self.regs
+            .modify_verify(|mc1: &mut ModulationModeControl1| {
+                if scale {
+                    *mc1 |= TXDRTSCALE;
+                }
+            })?;
         let exp = if scale { 16 + 5 } else { 16 };
         let txdr = rate * (1 << exp) as f64;
         let txdr = (txdr / 1000000.0) as u64;
@@ -588,9 +591,10 @@ impl Rfm22 {
     }
 
     fn clear_tx_fifo(&mut self) -> io::Result<()> {
-        self.regs.modify_verify(|reg: &mut OperatingFunctionControl2| {
-            reg.insert(FFCLRTX);
-        })?;
+        self.regs
+            .modify_verify(|reg: &mut OperatingFunctionControl2| {
+                reg.insert(FFCLRTX);
+            })?;
         self.regs.modify_verify(|reg: &mut OperatingFunctionControl2| {
             reg.remove(FFCLRTX);
         })
@@ -601,12 +605,10 @@ impl Rfm22 {
     }
 
     fn transmit(&mut self) -> io::Result<()> {
-        self.regs.modify(|reg: &mut OperatingFunctionControl1| {
-            reg.insert(TXON)
-        })
+        self.regs.modify(|reg: &mut OperatingFunctionControl1| reg.insert(TXON))
     }
 
-    fn transmit_large<'a, I: IntoIterator<Item=u8>>(&mut self, iter: I) -> io::Result<()> {
+    fn transmit_large<'a, I: IntoIterator<Item = u8>>(&mut self, iter: I) -> io::Result<()> {
         // The almost empty IRQ happens at 4 by default. Leave some extra space
         // so we can never fill the FIFO completely. This could probably be
         // exactly 4, but I don't know how the boundary conditions work in HW.
@@ -657,10 +659,12 @@ impl Rfm22 {
         Ok(())
     }
 
-    pub fn transmit_bitstream<'a, I: IntoIterator<Item=bool>>(&mut self, iter: I) -> io::Result<()> {
-        struct BitsToBytes<I: Iterator<Item=bool>>(I);
+    pub fn transmit_bitstream<'a, I: IntoIterator<Item = bool>>(&mut self,
+                                                                iter: I)
+                                                                -> io::Result<()> {
+        struct BitsToBytes<I: Iterator<Item = bool>>(I);
 
-        impl<I: Iterator<Item=bool>> Iterator for BitsToBytes<I> {
+        impl<I: Iterator<Item = bool>> Iterator for BitsToBytes<I> {
             type Item = u8;
 
             fn next(&mut self) -> Option<Self::Item> {

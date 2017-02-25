@@ -63,7 +63,7 @@ impl<'a> Iterator for FanPkt12Bits<'a> {
             1 => Some(true), // First bit is a 1
             2...5 => Some((self.pkt.addr & (1 << (3 - (self.count - 2))) != 0)),
             6...12 => Some((self.pkt.cmd as u8 & (1 << (6 - (self.count - 6))) != 0)),
-            _ => return None
+            _ => return None,
         };
         self.count += 1;
         ret
@@ -72,26 +72,32 @@ impl<'a> Iterator for FanPkt12Bits<'a> {
 
 #[test]
 fn fan12_serializer() {
-    fn from_iter<I: Iterator<Item=bool>>(mut iter: I) -> FanPkt12 {
+    fn from_iter<I: Iterator<Item = bool>>(mut iter: I) -> FanPkt12 {
         assert_eq!(iter.next().unwrap(), false); // Start bit
         assert_eq!(iter.next().unwrap(), true); // First 1 bit
         let addr = if iter.next().unwrap() { 1 << 3 } else { 0 } |
-            if iter.next().unwrap() { 1 << 2 } else { 0 } |
-            if iter.next().unwrap() { 1 << 1 } else { 0 } |
-            if iter.next().unwrap() { 1 << 0 } else { 0 };
+                   if iter.next().unwrap() { 1 << 2 } else { 0 } |
+                   if iter.next().unwrap() { 1 << 1 } else { 0 } |
+                   if iter.next().unwrap() { 1 << 0 } else { 0 };
         let cmd = if iter.next().unwrap() { 1 << 6 } else { 0 } |
-            if iter.next().unwrap() { 1 << 5 } else { 0 } |
-            if iter.next().unwrap() { 1 << 4 } else { 0 } |
-            if iter.next().unwrap() { 1 << 3 } else { 0 } |
-            if iter.next().unwrap() { 1 << 2 } else { 0 } |
-            if iter.next().unwrap() { 1 << 1 } else { 0 } |
-            if iter.next().unwrap() { 1 << 0 } else { 0 };
+                  if iter.next().unwrap() { 1 << 5 } else { 0 } |
+                  if iter.next().unwrap() { 1 << 4 } else { 0 } |
+                  if iter.next().unwrap() { 1 << 3 } else { 0 } |
+                  if iter.next().unwrap() { 1 << 2 } else { 0 } |
+                  if iter.next().unwrap() { 1 << 1 } else { 0 } |
+                  if iter.next().unwrap() { 1 << 0 } else { 0 };
         assert!(iter.next().is_none());
-        FanPkt12 { addr: addr, cmd: cmd }
+        FanPkt12 {
+            addr: addr,
+            cmd: cmd,
+        }
     }
     for addr in 0..16 {
         for cmd in 0..128 {
-            let pkt = FanPkt12 { addr: addr, cmd: cmd };
+            let pkt = FanPkt12 {
+                addr: addr,
+                cmd: cmd,
+            };
             assert_eq!(pkt.clone(), from_iter(pkt.into_iter()));
         }
     }
@@ -106,15 +112,15 @@ enum FanExpandState {
 
 /// Adapts a data bit stream to 3 symbols per bit
 #[derive(Clone)]
-struct FanExpand<I: Iterator<Item=bool>>(I, FanExpandState);
+struct FanExpand<I: Iterator<Item = bool>>(I, FanExpandState);
 
-impl<I: Iterator<Item=bool>> FanExpand<I> {
+impl<I: Iterator<Item = bool>> FanExpand<I> {
     fn new(iter: I) -> Self {
         FanExpand(iter, FanExpandState::Start)
     }
 }
 
-impl<I: Iterator<Item=bool>> Iterator for FanExpand<I> {
+impl<I: Iterator<Item = bool>> Iterator for FanExpand<I> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
