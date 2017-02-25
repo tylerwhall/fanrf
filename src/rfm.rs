@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use spidev::Spidev;
+use sysfs_gpio::{Direction, Pin};
 
 use regrw::{FakeRegs, RegRw, RfmReg, RfmRegs, RegLogger};
 
@@ -512,13 +513,45 @@ impl Rfm22IRQs {
 pub struct Rfm22 {
     pub regs: Rfm22Regs,
     irq: Rfm22IRQs,
+    shutdown: Option<Pin>,
+}
+
+impl Drop for Rfm22 {
+    fn drop(&mut self) {
+        // Put in reset when no longer in use
+        if let Some(ref mut sdn) = self.shutdown {
+            sdn.set_value(1).unwrap();
+        }
+    }
 }
 
 impl Rfm22 {
-    pub fn new(spi: Spidev) -> Self {
+    pub fn new(spi: Spidev, _irq: Option<Pin>, mut shutdown: Option<Pin>) -> Self {
+        if let Some(ref mut sdn) = shutdown {
+            sdn.export().unwrap();
+            // Put in reset if not already
+            let in_reset = match sdn.get_direction().unwrap() {
+                Direction::High => true,
+                Direction::Out => sdn.get_value().unwrap() > 0,
+                _ => false,
+            };
+            if !in_reset {
+                debug!("Resetting");
+                sdn.set_direction(Direction::High).unwrap();
+                thread::sleep(Duration::from_millis(1));
+            } else {
+                debug!("Already in reset");
+            }
+            // Bring out of reset
+            sdn.set_direction(Direction::Low).unwrap();
+            // 16.8ms specified from shutdown to TX
+            thread::sleep(Duration::from_millis(20));
+            info!("Reset complete");
+        }
         Rfm22 {
             regs: Rfm22Regs::new(spi),
             irq: Rfm22IRQs::new(),
+            shutdown: shutdown,
         }
     }
 
@@ -526,6 +559,7 @@ impl Rfm22 {
         Rfm22 {
             regs: Rfm22Regs::dummy(),
             irq: Rfm22IRQs::dummy(),
+            shutdown: None,
         }
     }
 

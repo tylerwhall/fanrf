@@ -3,6 +3,7 @@ extern crate bitflags;
 #[macro_use]
 extern crate clap;
 extern crate spidev;
+extern crate sysfs_gpio;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
@@ -16,6 +17,7 @@ use clap::{Arg, ArgMatches, App};
 use env_logger::LogBuilder;
 use log::LogLevelFilter;
 use spidev::{Spidev, SpidevOptions};
+use sysfs_gpio::Pin;
 
 use rfm::*;
 
@@ -218,11 +220,13 @@ fn main() {
 
     let spidev_path = matches.value_of("spidev").unwrap_or(SPIDEV_DEFAULT!());
     let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
+        let shutdown = matches.value_of("shutdown")
+            .map(|p| Pin::new(p.parse::<u64>().expect("Invalid argument for shutdown")));
         let options = SpidevOptions::new()
             .max_speed_hz(10 * 1000 * 1000)
             .build();
         spi.configure(&options).unwrap();
-        Rfm22::new(spi)
+        Rfm22::new(spi, None, shutdown)
     } else {
         warn!("Using dummy backend.");
         // Set FIFO to almost empty to we don't get stuck waiting on it
