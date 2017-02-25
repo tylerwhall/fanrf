@@ -1,10 +1,20 @@
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate clap;
 extern crate spidev;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
 mod regrw;
 mod rfm;
 
+use std::env;
+
+use clap::{Arg, App};
+use env_logger::LogBuilder;
+use log::LogLevelFilter;
 use spidev::{Spidev, SpidevOptions};
 
 use rfm::*;
@@ -145,14 +155,56 @@ impl<I: Iterator<Item = bool>> Iterator for FanExpand<I> {
 }
 
 fn main() {
-    let mut rf = if let Ok(mut spi) = Spidev::open("/dev/spidev1.0") {
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!())
+        .arg(Arg::with_name("spidev")
+            .short("s")
+            .long("spidev")
+            .help("Linux spidev device. Deafults to /dev/spidev1.0")
+            .takes_value(true))
+        .arg(Arg::with_name("irq")
+            .short("i")
+            .long("irq")
+            .help("IRQ gpio number")
+            .takes_value(true))
+        .arg(Arg::with_name("shutdown")
+            .short("n")
+            .long("shutdown")
+            .help("Shutdown gpio number")
+            .takes_value(true))
+        .arg(Arg::with_name("verbose")
+            .short("v")
+            .long("verbose")
+            .help("Verbose logging"))
+        .arg(Arg::with_name("debug")
+            .short("d")
+            .long("debug")
+            .help("Debug logging (implies debug)"))
+        .get_matches();
+
+    let mut log_builder = LogBuilder::new();
+    if let Ok(log) = env::var("RUST_LOG") {
+        log_builder.parse(&log);
+    } else if matches.is_present("debug") {
+        log_builder.filter(None, LogLevelFilter::Debug);
+    } else if matches.is_present("verbose") {
+        log_builder.filter(None, LogLevelFilter::Info);
+    } else {
+        log_builder.filter(None, LogLevelFilter::Warn);
+    }
+    log_builder.init().unwrap();
+
+    let spidev_path = matches.value_of("spidev").unwrap_or("/dev/spidev1.0");
+
+    let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
         let options = SpidevOptions::new()
             .max_speed_hz(10 * 1000 * 1000)
             .build();
         spi.configure(&options).unwrap();
         Rfm22::new(spi)
     } else {
-        println!("Using dummy backend.");
+        warn!("Using dummy backend.");
         // Set FIFO to almost empty to we don't get stuck waiting on it
         Rfm22::dummy()
     };
