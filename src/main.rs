@@ -155,6 +155,7 @@ impl<I: Iterator<Item = bool>> Iterator for FanExpand<I> {
 }
 
 macro_rules! SPIDEV_DEFAULT { () => ("/dev/spidev1.0") }
+macro_rules! TX_POWER_DEFAULT { () => (3) }
 
 fn arg_parse<'a>() -> ArgMatches<'a> {
     App::new(crate_name!())
@@ -174,6 +175,11 @@ fn arg_parse<'a>() -> ArgMatches<'a> {
             .short("n")
             .long("shutdown")
             .help("Shutdown gpio number")
+            .takes_value(true))
+        .arg(Arg::with_name("txpower")
+            .short("p")
+            .long("txpower")
+            .help(concat!("Transmit power. Range 0-7. Defaults to ", stringify!(TX_POWER_DEFAULT!())))
             .takes_value(true))
         .arg(Arg::with_name("verbose")
             .short("v")
@@ -203,6 +209,12 @@ fn log_init(matches: &ArgMatches) {
 fn main() {
     let matches = arg_parse();
     log_init(&matches);
+    let txpower = matches.value_of("txpower")
+        .map(|p| p.parse::<u8>().expect("Invalid argument for txpower"))
+        .unwrap_or(TX_POWER_DEFAULT!());
+    if txpower > 7 {
+        panic!("Requested TX power out of range.");
+    }
 
     let spidev_path = matches.value_of("spidev").unwrap_or(SPIDEV_DEFAULT!());
     let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
@@ -224,7 +236,7 @@ fn main() {
     rf.regs.write_validate(SKIPSYN).unwrap();
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
-    rf.set_tx_power(3).unwrap();
+    rf.set_tx_power(txpower).unwrap();
 
     let pkt = FanPkt12::new(0x9, FanCmd12::Light);
     let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
