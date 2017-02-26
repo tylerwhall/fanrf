@@ -463,7 +463,7 @@ struct Rfm22IRQs {
 impl Rfm22IRQs {
     fn new(mut gpio: Option<Pin>) -> Self {
         if let Some(ref mut pin) = gpio {
-            pin.set_edge(Edge::RisingEdge).unwrap();
+            pin.set_edge(Edge::FallingEdge).unwrap();
         }
         Rfm22IRQs {
             pending: InterruptStatus1::empty(),
@@ -501,10 +501,12 @@ impl Rfm22IRQs {
 
     fn _wait_for_change(&mut self) {
         if let Some((ref mut pin, ref mut poller)) = self.gpio_poller {
-            if pin.get_value().unwrap() == 0 {
+            if pin.get_value().unwrap() > 0 {
                 debug!("Poll started");
-                poller.poll(1000).unwrap();
-                debug!("Poll finished");
+                match poller.poll(1000).unwrap() {
+                    Some(_) => debug!("Poll finished"),
+                    None => debug!("Timed out: {}", pin.get_value().unwrap()),
+                }
             }
         } else {
             thread::sleep(Duration::from_millis(1));
@@ -518,13 +520,13 @@ impl Rfm22IRQs {
         let start = Instant::now();
         // TODO: should create IRQ poller here to avoid looping on prior events
         while !pnd.contains(irqs) {
-            pnd = self.poll(regs)?;
-            debug!("pending {:?}", pnd);
-            self._wait_for_change();
             if Instant::now().duration_since(start) > Duration::from_secs(1) {
                 error!("Timed out");
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "IRQ polling timed out"));
             }
+            self._wait_for_change();
+            pnd = self.poll(regs)?;
+            debug!("pending {:?}", pnd);
         }
         Ok(irqs)
     }
@@ -545,7 +547,8 @@ impl Rfm22IRQs {
         toclear.remove(irqs.into());
         self.pending.remove(toclear);
 
-        regs.write_validate(irqs)
+        regs.write_validate(irqs)?;
+        regs.write_validate(InterruptEnable2::empty())
     }
 }
 
