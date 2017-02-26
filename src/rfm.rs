@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::io;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use spidev::Spidev;
 use sysfs_gpio::{Direction, Pin};
@@ -497,13 +497,12 @@ impl Rfm22IRQs {
         debug!("waiting for {:?}", irqs);
         let mut pnd = self.poll(regs)?;
         debug!("pending {:?}", pnd);
-        let mut timeout = 0;
+        let start = Instant::now();
         while !pnd.contains(irqs) {
             pnd = self.poll(regs)?;
             debug!("pending {:?}", pnd);
             thread::sleep(Duration::from_millis(1));
-            timeout += 1;
-            if timeout > 1000 {
+            if Instant::now().duration_since(start) > Duration::from_secs(1) {
                 error!("Timed out");
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "IRQ polling timed out"));
             }
