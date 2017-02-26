@@ -557,7 +557,10 @@ impl Rfm22 {
             // Bring out of reset
             sdn.set_direction(Direction::Low).unwrap();
             // 16.8ms specified from shutdown to TX
-            thread::sleep(Duration::from_millis(20));
+            // 20 does not work
+            // 30 works
+            // Using 40 for margin
+            thread::sleep(Duration::from_millis(40));
             info!("Reset complete");
         }
         Rfm22 {
