@@ -47,7 +47,7 @@ enum FanCmd12 {
     Light = 0x01,
     FanHigh = 0x20,
     FanMed = 0x10,
-    FanLow = 0x40,
+    FanLow = 0x04,
     FanOff = 0x02,
 }
 
