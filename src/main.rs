@@ -13,7 +13,7 @@ mod rfm;
 
 use std::env;
 
-use clap::{Arg, ArgMatches, App};
+use clap::{Arg, ArgMatches, App, AppSettings, SubCommand};
 use env_logger::LogBuilder;
 use log::LogLevelFilter;
 use spidev::{Spidev, SpidevOptions};
@@ -21,10 +21,34 @@ use sysfs_gpio::Pin;
 
 use rfm::*;
 
+enum FanPkt {
+    Dumb(FanPkt12),
+}
+
+impl FanPkt {
+    fn transmit(&self, rf: &mut Rfm22) {
+        match *self {
+            FanPkt::Dumb(ref pkt) => {
+                let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
+                                             .chain(std::iter::repeat(false).take(11 * 3))) // 11ms pause between commands. 1/3ms symbol period
+                    .cycle()
+                    .take(20)
+                    .flat_map(|i| i);
+
+                rf.transmit_bitstream(bits).unwrap();
+            }
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum FanCmd12 {
-    Light = 1,
+    Light = 0x01,
+    FanHigh = 0x20,
+    FanMed = 0x10,
+    FanLow = 0x40,
+    FanOff = 0x02,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -159,14 +183,14 @@ impl<I: Iterator<Item = bool>> Iterator for FanExpand<I> {
 macro_rules! SPIDEV_DEFAULT { () => ("/dev/spidev1.0") }
 macro_rules! TX_POWER_DEFAULT { () => (3) }
 
-fn arg_parse<'a>() -> ArgMatches<'a> {
+fn arg_app<'a, 'b>() -> App<'a, 'b> {
     App::new(crate_name!())
         .version(crate_version!())
         .author(crate_authors!())
         .arg(Arg::with_name("spidev")
             .short("s")
             .long("spidev")
-            .help(concat!("Linux spidev device. Deafults to ", SPIDEV_DEFAULT!()))
+            .help(concat!("Linux spidev device. Defaults to ", SPIDEV_DEFAULT!()))
             .takes_value(true))
         .arg(Arg::with_name("irq")
             .short("i")
@@ -181,7 +205,8 @@ fn arg_parse<'a>() -> ArgMatches<'a> {
         .arg(Arg::with_name("txpower")
             .short("p")
             .long("txpower")
-            .help(concat!("Transmit power. Range 0-7. Defaults to ", stringify!(TX_POWER_DEFAULT!())))
+            .help(concat!("Transmit power. Range 0-7. Defaults to ",
+                          TX_POWER_DEFAULT!()))
             .takes_value(true))
         .arg(Arg::with_name("verbose")
             .short("v")
@@ -191,7 +216,21 @@ fn arg_parse<'a>() -> ArgMatches<'a> {
             .short("d")
             .long("debug")
             .help("Debug logging (implies debug)"))
-        .get_matches()
+        .subcommand(SubCommand::with_name("dumb")
+            .about("Send a 12-bit command. For fans with no LCD in the remote where the fan \
+                    keeps the dimmer state.")
+            .arg(Arg::with_name("command")
+                .index(1)
+                .required(true)
+                .help(concat!("light\tToggle the light\n",
+                              "off\tFan off\n",
+                              "low\tFan low\n",
+                              "medum\tFan medium\n",
+                              "high\tFan high\n"))))
+        .subcommand(SubCommand::with_name("smart")
+            .about("Send a 21-bit command. For fans with an LCD in the remote where the remote \
+                    keeps the dimmer state."))
+        .setting(AppSettings::SubcommandRequired)
 }
 
 fn log_init(matches: &ArgMatches) {
@@ -209,7 +248,8 @@ fn log_init(matches: &ArgMatches) {
 }
 
 fn main() {
-    let matches = arg_parse();
+    let app = arg_app();
+    let matches = app.get_matches();
     log_init(&matches);
     let txpower = matches.value_of("txpower")
         .map(|p| p.parse::<u8>().expect("Invalid argument for txpower"))
@@ -217,6 +257,28 @@ fn main() {
     if txpower > 7 {
         panic!("Requested TX power out of range.");
     }
+
+    let pkt = if let Some(matches) = matches.subcommand_matches("dumb") {
+        let cmd = match matches.value_of("command").unwrap() {
+            "light" => FanCmd12::Light,
+            "off" => FanCmd12::FanOff,
+            "low" => FanCmd12::FanLow,
+            "medium" => FanCmd12::FanMed,
+            "high" => FanCmd12::FanHigh,
+            _ => {
+                clap::Error::with_description("Invalid fan command. Possible values: \
+                                               light|off|low|medium|high",
+                                              clap::ErrorKind::UnknownArgument)
+                    .exit();
+            }
+        };
+        FanPkt::Dumb(FanPkt12::new(0x9, cmd))
+    } else if let Some(matches) = matches.subcommand_matches("smart") {
+        unimplemented!()
+    } else {
+        // Arg parser enforces subcommand requirement
+        unreachable!()
+    };
 
     let spidev_path = matches.value_of("spidev").unwrap_or(SPIDEV_DEFAULT!());
     let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
@@ -243,13 +305,5 @@ fn main() {
     rf.set_freq_mhz(303.8).unwrap();
     rf.set_data_rate_hz(3000.0).unwrap();
     rf.set_tx_power(txpower).unwrap();
-
-    let pkt = FanPkt12::new(0x9, FanCmd12::Light);
-    let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
-                                 .chain(std::iter::repeat(false).take(11 * 3))) // 11ms pause between commands. 1/3ms symbol period
-        .cycle()
-        .take(20)
-        .flat_map(|i| i);
-
-    rf.transmit_bitstream(bits).unwrap();
+    pkt.transmit(&mut rf);
 }

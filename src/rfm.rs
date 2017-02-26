@@ -513,7 +513,10 @@ impl Rfm22IRQs {
         }
     }
 
-    fn wait(&mut self, regs: &mut Rfm22Regs, irqs: InterruptStatus1) -> io::Result<InterruptStatus1> {
+    fn wait(&mut self,
+            regs: &mut Rfm22Regs,
+            irqs: InterruptStatus1)
+            -> io::Result<InterruptStatus1> {
         debug!("waiting for {:?}", irqs);
         let mut pnd = self.poll(regs)?;
         debug!("pending {:?}", pnd);
@@ -581,6 +584,7 @@ impl Rfm22 {
             // 20 does not work
             // 30 works
             // Using 40 for margin
+            // Should wait on IRQ
             thread::sleep(Duration::from_millis(40));
             info!("Reset complete");
         }
