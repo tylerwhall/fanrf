@@ -12,6 +12,7 @@ mod regrw;
 mod rfm;
 
 use std::env;
+use std::iter::repeat;
 
 use clap::{Arg, ArgMatches, App, AppSettings, SubCommand};
 use env_logger::LogBuilder;
@@ -29,8 +30,9 @@ impl FanPkt {
     fn transmit(&self, rf: &mut Rfm22) {
         match *self {
             FanPkt::Dumb(ref pkt) => {
-                let bits = std::iter::repeat(FanExpand::new(pkt.into_iter())
-                                             .chain(std::iter::repeat(false).take(11 * 3))) // 11ms pause between commands. 1/3ms symbol period
+                let bits = repeat(FanExpand::new(repeat(false).take(1) // Start bit
+                                                 .chain(pkt.into_iter()))
+                                  .chain(std::iter::repeat(false).take(11 * 3))) // 11ms pause between commands. 1/3ms symbol period
                     .cycle()
                     .take(20)
                     .flat_map(|i| i);
@@ -95,10 +97,9 @@ impl<'a> Iterator for FanPkt12Bits<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let ret = match self.count {
-            0 => Some(false), // Start bit
-            1 => Some(true), // First bit is a 1
-            2...5 => Some((self.pkt.addr & (1 << (3 - (self.count - 2))) != 0)),
-            6...12 => Some((self.pkt.cmd as u8 & (1 << (6 - (self.count - 6))) != 0)),
+            0 => Some(true), // First bit is a 1
+            1...4 => Some((self.pkt.addr & (1 << (3 - (self.count - 1))) != 0)),
+            5...11 => Some((self.pkt.cmd as u8 & (1 << (6 - (self.count - 5))) != 0)),
             _ => return None,
         };
         self.count += 1;
@@ -109,7 +110,6 @@ impl<'a> Iterator for FanPkt12Bits<'a> {
 #[test]
 fn fan12_serializer() {
     fn from_iter<I: Iterator<Item = bool>>(mut iter: I) -> FanPkt12 {
-        assert_eq!(iter.next().unwrap(), false); // Start bit
         assert_eq!(iter.next().unwrap(), true); // First 1 bit
         let addr = if iter.next().unwrap() { 1 << 3 } else { 0 } |
                    if iter.next().unwrap() { 1 << 2 } else { 0 } |
