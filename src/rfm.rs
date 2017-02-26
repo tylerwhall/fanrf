@@ -4,7 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use spidev::Spidev;
-use sysfs_gpio::{Direction, Pin};
+use sysfs_gpio::{Direction, Edge, Pin, PinPoller};
 
 use regrw::{FakeRegs, RegRw, RfmReg, RfmRegs, RegLogger};
 
@@ -456,16 +456,22 @@ impl Rfm22Regs {
 struct Rfm22IRQs {
     pending: InterruptStatus1,
     enabled: InterruptEnable1,
-    gpio: Option<Pin>,
+    gpio_poller: Option<(Pin, PinPoller)>,
     dummy: bool,
 }
 
 impl Rfm22IRQs {
-    fn new(gpio: Option<Pin>) -> Self {
+    fn new(mut gpio: Option<Pin>) -> Self {
+        if let Some(ref mut pin) = gpio {
+            pin.set_edge(Edge::RisingEdge).unwrap();
+        }
         Rfm22IRQs {
             pending: InterruptStatus1::empty(),
             enabled: InterruptEnable1::empty(),
-            gpio: gpio,
+            gpio_poller: gpio.map(|pin| {
+                let poller = pin.get_poller().unwrap();
+                (pin, poller)
+            }),
             dummy: false,
         }
     }
@@ -474,7 +480,7 @@ impl Rfm22IRQs {
         Rfm22IRQs {
             pending: InterruptStatus1::empty(),
             enabled: InterruptEnable1::empty(),
-            gpio: None,
+            gpio_poller: None,
             dummy: true,
         }
     }
@@ -493,15 +499,28 @@ impl Rfm22IRQs {
         }
     }
 
+    fn _wait_for_change(&mut self) {
+        if let Some((ref mut pin, ref mut poller)) = self.gpio_poller {
+            if pin.get_value().unwrap() == 0 {
+                debug!("Poll started");
+                poller.poll(1000).unwrap();
+                debug!("Poll finished");
+            }
+        } else {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     fn wait(&mut self, regs: &mut Rfm22Regs, irqs: InterruptStatus1) -> io::Result<InterruptStatus1> {
         debug!("waiting for {:?}", irqs);
         let mut pnd = self.poll(regs)?;
         debug!("pending {:?}", pnd);
         let start = Instant::now();
+        // TODO: should create IRQ poller here to avoid looping on prior events
         while !pnd.contains(irqs) {
             pnd = self.poll(regs)?;
             debug!("pending {:?}", pnd);
-            thread::sleep(Duration::from_millis(1));
+            self._wait_for_change();
             if Instant::now().duration_since(start) > Duration::from_secs(1) {
                 error!("Timed out");
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "IRQ polling timed out"));
