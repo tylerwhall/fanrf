@@ -493,6 +493,24 @@ impl Rfm22IRQs {
         }
     }
 
+    fn wait(&mut self, regs: &mut Rfm22Regs, irqs: InterruptStatus1) -> io::Result<InterruptStatus1> {
+        debug!("waiting for {:?}", irqs);
+        let mut pnd = self.poll(regs)?;
+        debug!("pending {:?}", pnd);
+        let mut timeout = 0;
+        while !pnd.contains(irqs) {
+            pnd = self.poll(regs)?;
+            debug!("pending {:?}", pnd);
+            thread::sleep(Duration::from_millis(1));
+            timeout += 1;
+            if timeout > 1000 {
+                error!("Timed out");
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "IRQ polling timed out"));
+            }
+        }
+        Ok(irqs)
+    }
+
     fn handled(&mut self, irqs: InterruptStatus1) {
         self.pending.remove(irqs)
     }
@@ -658,29 +676,13 @@ impl Rfm22 {
         // Start transmitter
         self.transmit()?;
         while let Some(_) = iter.peek() {
-            let mut timeout = 0;
-            while !self.irq.poll(&mut self.regs)?.contains(ITXFFAEM) {
-                thread::sleep(Duration::from_millis(1)); // XXX hardcoded
-                timeout += 1;
-                if timeout > 1000 {
-                    error!("Timed out");
-                    return Ok(());
-                }
-            }
+            self.irq.wait(&mut self.regs, ITXFFAEM)?;
             self.irq.handled(ITXFFAEM);
             buf.clear();
             buf.extend(iter.by_ref().take(capacity));
             self.write_tx_fifo(&buf)?;
         }
-        let mut timeout = 0;
-        while !self.irq.poll(&mut self.regs)?.contains(IPKSENT) {
-            thread::sleep(Duration::from_millis(1)); // XXX hardcoded
-            timeout += 1;
-            if timeout > 1000 {
-                error!("Timed out");
-                return Ok(());
-            }
-        }
+        self.irq.wait(&mut self.regs, IPKSENT)?;
         self.irq.handled(IPKSENT);
         Ok(())
     }
