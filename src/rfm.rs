@@ -556,7 +556,7 @@ pub struct Rfm22 {
 }
 
 impl Rfm22 {
-    pub fn new(spi: Spidev, irq: Option<Pin>, mut shutdown: Option<Pin>) -> Self {
+    pub fn new(spi: Spidev, mut irq: Option<Pin>, mut shutdown: Option<Pin>) -> Self {
         if let Some(ref mut sdn) = shutdown {
             sdn.export().unwrap();
             // Put in reset if not already
@@ -580,6 +580,9 @@ impl Rfm22 {
             // Using 40 for margin
             thread::sleep(Duration::from_millis(40));
             info!("Reset complete");
+        }
+        if let Some(ref mut irq) = irq {
+            irq.export().unwrap();
         }
         Rfm22 {
             regs: Rfm22Regs::new(spi),

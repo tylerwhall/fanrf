@@ -222,11 +222,13 @@ fn main() {
     let mut rf = if let Ok(mut spi) = Spidev::open(spidev_path) {
         let shutdown = matches.value_of("shutdown")
             .map(|p| Pin::new(p.parse::<u64>().expect("Invalid argument for shutdown")));
+        let irq = matches.value_of("irq")
+            .map(|p| Pin::new(p.parse::<u64>().expect("Invalid argument for irq")));
         let options = SpidevOptions::new()
             .max_speed_hz(10 * 1000 * 1000)
             .build();
         spi.configure(&options).unwrap();
-        Rfm22::new(spi, None, shutdown)
+        Rfm22::new(spi, irq, shutdown)
     } else {
         warn!("Using dummy backend.");
         // Set FIFO to almost empty to we don't get stuck waiting on it
