@@ -456,14 +456,16 @@ impl Rfm22Regs {
 struct Rfm22IRQs {
     pending: InterruptStatus1,
     enabled: InterruptEnable1,
+    gpio: Option<Pin>,
     dummy: bool,
 }
 
 impl Rfm22IRQs {
-    fn new() -> Self {
+    fn new(gpio: Option<Pin>) -> Self {
         Rfm22IRQs {
             pending: InterruptStatus1::empty(),
             enabled: InterruptEnable1::empty(),
+            gpio: gpio,
             dummy: false,
         }
     }
@@ -472,6 +474,7 @@ impl Rfm22IRQs {
         Rfm22IRQs {
             pending: InterruptStatus1::empty(),
             enabled: InterruptEnable1::empty(),
+            gpio: None,
             dummy: true,
         }
     }
@@ -516,17 +519,8 @@ pub struct Rfm22 {
     shutdown: Option<Pin>,
 }
 
-impl Drop for Rfm22 {
-    fn drop(&mut self) {
-        // Put in reset when no longer in use
-        if let Some(ref mut sdn) = self.shutdown {
-            sdn.set_value(1).unwrap();
-        }
-    }
-}
-
 impl Rfm22 {
-    pub fn new(spi: Spidev, _irq: Option<Pin>, mut shutdown: Option<Pin>) -> Self {
+    pub fn new(spi: Spidev, irq: Option<Pin>, mut shutdown: Option<Pin>) -> Self {
         if let Some(ref mut sdn) = shutdown {
             sdn.export().unwrap();
             // Put in reset if not already
@@ -550,7 +544,7 @@ impl Rfm22 {
         }
         Rfm22 {
             regs: Rfm22Regs::new(spi),
-            irq: Rfm22IRQs::new(),
+            irq: Rfm22IRQs::new(irq),
             shutdown: shutdown,
         }
     }
@@ -725,5 +719,14 @@ impl Rfm22 {
 
     pub fn init(&mut self) {
         self.regs.write_validate(XTON | PLLON).unwrap();
+    }
+}
+
+impl Drop for Rfm22 {
+    fn drop(&mut self) {
+        // Put in reset when no longer in use
+        if let Some(ref mut sdn) = self.shutdown {
+            sdn.set_value(1).unwrap();
+        }
     }
 }
