@@ -340,6 +340,11 @@ fn arg_app<'a, 'b>() -> App<'a, 'b> {
             .help(concat!("Transmit power. Range 0-7. Defaults to ",
                           TX_POWER_DEFAULT!()))
             .takes_value(true))
+        .arg(Arg::with_name("address")
+            .short("a")
+            .long("address")
+            .help("Fan address")
+            .takes_value(true))
         .arg(Arg::with_name("verbose")
             .short("v")
             .long("verbose")
@@ -398,6 +403,13 @@ fn main() {
         panic!("Requested TX power out of range.");
     }
 
+    let address = matches.value_of("address")
+        .map(|p| p.parse::<u8>().expect("Invalid argument for address"))
+        .unwrap();
+    if address > 0xf {
+        panic!("Address out of range. Must be < 0xf");
+    }
+
     let pkt = if let Some(matches) = matches.subcommand_matches("dumb") {
         let cmd = match matches.value_of("command").unwrap() {
             "light" => FanCmd12::Light,
@@ -412,7 +424,7 @@ fn main() {
                     .exit();
             }
         };
-        FanPkt::Dumb(FanPkt12::new(0x9, cmd))
+        FanPkt::Dumb(FanPkt12::new(address, cmd))
     } else if let Some(matches) = matches.subcommand_matches("smart") {
         let fan = match matches.value_of("fan").unwrap() {
             "off" => FanState21::Off,
@@ -442,7 +454,7 @@ fn main() {
                                               clap::ErrorKind::InvalidValue)
                     .exit();
             });
-        FanPkt::Smart(FanPkt21::new(0xe, brightness, fan))
+        FanPkt::Smart(FanPkt21::new(address, brightness, fan))
     } else {
         // Arg parser enforces subcommand requirement
         unreachable!()
